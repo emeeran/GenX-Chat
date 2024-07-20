@@ -5,28 +5,25 @@ import base64
 from gtts import gTTS
 import PyPDF2
 import docx
-import markdown
 from PIL import Image
 import pytesseract
-import io
 from deep_translator import GoogleTranslator
-
-# Ensure the current directory is in the Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-# Set page config at the very beginning
-st.set_page_config(page_title="Groq-Chat", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
-
+from textblob import TextBlob
 from datetime import datetime
 from fpdf import FPDF
 
-# Import from our custom modules
 from config import load_config
 from api_handler import get_groq_client, get_async_groq_client, stream_llm_response, APIError
 from utils import play_audio, validate_prompt
 from auth import authenticate
-from sys_message import system_messages  # Import system messages
+from sys_message import system_messages
+
+# Set the page configuration
+st.set_page_config(page_title="Groq-Chat", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
+
+# Ensure the current directory is in the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
 
 # Load configuration
 try:
@@ -36,28 +33,21 @@ except Exception as e:
     st.stop()
 
 # Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "audio_base64" not in st.session_state:
-    st.session_state.audio_base64 = ""
-if "file_content" not in st.session_state:
-    st.session_state.file_content = ""
-if "chat_histories" not in st.session_state:
-    st.session_state.chat_histories = []
-if "system_message" not in st.session_state:
-    st.session_state.system_message = system_messages["default"]
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "model_params" not in st.session_state:
-    st.session_state.model_params = {}
-if "total_tokens" not in st.session_state:
-    st.session_state.total_tokens = 0
-if "total_cost" not in st.session_state:
-    st.session_state.total_cost = 0
-if "enable_audio" not in st.session_state:
-    st.session_state.enable_audio = False
-if "language" not in st.session_state:
-    st.session_state.language = "english"
+for key, default_value in {
+    "messages": [],
+    "audio_base64": "",
+    "file_content": "",
+    "chat_histories": [],
+    "system_message": system_messages["default"],
+    "user": None,
+    "model_params": {},
+    "total_tokens": 0,
+    "total_cost": 0,
+    "enable_audio": False,
+    "language": "english"
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
 # Groq API setup
 try:
@@ -134,20 +124,11 @@ def load_chat_history(selected_history):
 
 def update_token_count(tokens):
     st.session_state.total_tokens += tokens
-    # Assuming a cost of $0.0001 per token (adjust as needed)
-    st.session_state.total_cost += tokens * 0.0001
+    st.session_state.total_cost += tokens * 0.0001  # Adjust as needed
 
 def text_to_speech(text, lang):
-    # Map full language names to gTTS language codes
-    lang_map = {
-        "english": "en",
-        "tamil": "ta",
-        "hindi": "hi"
-    }
-
-    # Get the correct language code
-    lang_code = lang_map.get(lang.lower(), "en")  # Default to English if language not found
-
+    lang_map = {"english": "en", "tamil": "ta", "hindi": "hi"}
+    lang_code = lang_map.get(lang.lower(), "en")
     tts = gTTS(text=text, lang=lang_code)
     audio_file = "temp_audio.mp3"
     tts.save(audio_file)
@@ -158,11 +139,8 @@ def text_to_speech(text, lang):
     st.session_state.audio_base64 = audio_base64
 
 def reset_all():
-    st.session_state.messages = []
-    st.session_state.total_tokens = 0
-    st.session_state.total_cost = 0
-    st.session_state.file_content = ""
-    st.session_state.audio_base64 = ""
+    for key in ["messages", "total_tokens", "total_cost", "file_content", "audio_base64"]:
+        st.session_state[key] = ""
 
 def translate_text(text, target_lang):
     if target_lang == "english":
@@ -170,22 +148,36 @@ def translate_text(text, target_lang):
     translator = GoogleTranslator(source='auto', target=target_lang)
     return translator.translate(text)
 
+def analyze_sentiment(text):
+    blob = TextBlob(text)
+    return blob.sentiment.polarity
+
+def generate_contextual_response(client, model_params, user_input, conversation_history):
+    sentiment_score = analyze_sentiment(user_input)
+    sentiment = "positive" if sentiment_score > 0 else "negative" if sentiment_score < 0 else "neutral"
+
+    context = " ".join([msg["content"] for msg in conversation_history if msg["role"] == "user"])
+    full_prompt = f"Sentiment: {sentiment}\nContext: {context}\nUser: {user_input}\nAssistant:"
+
+    response = ""
+    for chunk in stream_llm_response(client, model_params, [{"role": "user", "content": full_prompt}]):
+        response += chunk
+
+    return response
+
 def main():
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;">🤖 <i>Groq Fast Chat</i> 💬</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;"> <i>Groq Fast Chat</i> 💬</h1>""", unsafe_allow_html=True)
 
     with st.sidebar:
         st.title("🔧 Settings")
 
-        st.write(f"Total Tokens: {st.session_state.total_tokens}")
-        st.write(f"Total Cost: ${st.session_state.total_cost:.4f}")
-
         col1, col2 = st.columns(2)
         with col1:
-            st.button("📄 Exp.to PDF", on_click=export_chat, args=("pdf",))
+            st.button("📄 Save-PDF", on_click=export_chat, args=("pdf",))
             if st.button("Reset All"):
                 reset_all()
         with col2:
-            st.button("📄 Exp.to md", on_click=export_chat, args=("md",))
+            st.button("📄 Save-md", on_click=export_chat, args=("md",))
             if st.button("Save Chat"):
                 save_chat_history()
 
@@ -194,9 +186,7 @@ def main():
             load_chat_history(selected_history)
 
         st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
-
-        st.session_state.language = st.selectbox("Select Language:", ["english", "tamil", "hindi"])
-
+        st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
         system_message_choice = st.selectbox("System Message:", options=list(system_messages.keys()), index=list(system_messages.keys()).index("default"))
         st.session_state.system_message = system_messages[system_message_choice]
 
@@ -223,37 +213,34 @@ def main():
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
 
+        st.write(f"Total Tokens: {st.session_state.total_tokens}")
+        st.write(f"Total Cost: ${st.session_state.total_cost:.4f}")
+
     # Main chat interface
     chat_container = st.container()
 
     with chat_container:
-        # Display chat history in a scrollable area
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    # Prompt input at the bottom
     prompt = st.chat_input("Message Groq Fast Chat...")
 
     if prompt:
         try:
             validate_prompt(prompt)
-            if st.session_state.file_content:
-                prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            user_input = prompt
+            st.session_state.messages.append({"role": "user", "content": user_input})
 
             with st.chat_message("assistant"):
                 response_container = st.empty()
                 full_response = ""
                 try:
-                    for chunk in stream_llm_response(client, st.session_state.model_params, st.session_state.messages):
-                        full_response += chunk
-                        response_container.markdown(full_response + "▌")
-
-                    translated_response = translate_text(full_response, st.session_state.language)
+                    context_response = generate_contextual_response(client, st.session_state.model_params, user_input, st.session_state.messages)
+                    translated_response = translate_text(context_response, st.session_state.language)
                     response_container.markdown(translated_response)
                     st.session_state.messages.append({"role": "assistant", "content": translated_response})
-                    update_token_count(len(full_response.split()))
+                    update_token_count(len(context_response.split()))
 
                     if st.session_state.enable_audio:
                         text_to_speech(translated_response, st.session_state.language)
@@ -266,8 +253,8 @@ def main():
         except ValueError as e:
             st.error(str(e))
 
-    # Scroll to the bottom of the chat
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
+

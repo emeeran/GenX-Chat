@@ -20,4 +20,5 @@ system_messages = {
     "scientist": "You are a scientist. Provide detailed scientific explanations and information.",
     "software_engineer": "You are a software engineer. Provide software development best practices and technical insights.",
     "travel_guide": "You are a travel guide. Provide travel tips and information on destinations.",
+    "custom" : ""
 }

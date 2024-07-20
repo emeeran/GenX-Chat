@@ -5,8 +5,10 @@ import base64
 from gtts import gTTS
 import PyPDF2
 import docx
+import markdown
 from PIL import Image
 import pytesseract
+import io
 from deep_translator import GoogleTranslator
 from datetime import datetime
 from fpdf import FPDF
@@ -16,16 +18,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 # Set page config at the very beginning
-st.set_page_config(page_title="Groq-Chat", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Groq-Chat", page_icon="https://shorturl.at/gVzj6", layout="wide", initial_sidebar_state="expanded")
 
 # Import from our custom modules
 from config import load_config
 from api_handler import get_groq_client, get_async_groq_client, stream_llm_response, APIError
 from utils import play_audio, validate_prompt
 from auth import authenticate
-from sys_message import system_messages  # Import system messages
-
-# Load configuration
+from sys_message import system_messages  
 try:
     config = load_config()
 except Exception as e:
@@ -33,13 +33,33 @@ except Exception as e:
     st.stop()
 
 # Initialize session state
-for key in ["messages", "audio_base64", "file_content", "chat_histories", "system_message", "user", "model_params", "total_tokens", "total_cost", "enable_audio", "language"]:
-    if key not in st.session_state:
-        st.session_state[key] = [] if key in ["messages", "chat_histories"] else ""
-        st.session_state[key] = False if key == "enable_audio" else st.session_state[key]
-        st.session_state[key] = 0 if key in ["total_tokens", "total_cost"] else st.session_state[key]
-        st.session_state[key] = "default" if key == "system_message" else st.session_state[key]
-        st.session_state[key] = "english" if key == "language" else st.session_state[key]
+def initialize_session_state():
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "audio_base64" not in st.session_state:
+        st.session_state.audio_base64 = ""
+    if "file_content" not in st.session_state:
+        st.session_state.file_content = ""
+    if "chat_histories" not in st.session_state:
+        st.session_state.chat_histories = []
+    if "persona" not in st.session_state:
+        st.session_state.persona = system_messages["default"]
+    if "user" not in st.session_state:
+        st.session_state.user = None
+    if "model_params" not in st.session_state:
+        st.session_state.model_params = {}
+    if "total_tokens" not in st.session_state:
+        st.session_state.total_tokens = 0
+    if "total_cost" not in st.session_state:
+        st.session_state.total_cost = 0
+    if "enable_audio" not in st.session_state:
+        st.session_state.enable_audio = False
+    if "language" not in st.session_state:
+        st.session_state.language = "english"
+    if "custom_persona" not in st.session_state:
+        st.session_state.custom_persona = ""
+
+initialize_session_state()
 
 # Groq API setup
 try:
@@ -179,9 +199,14 @@ def main():
 
         st.session_state.language = st.selectbox("Select Language:", ["english", "tamil", "hindi"])
 
-        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()), index=list(system_messages.keys()).index("default"))
-        persona_content = st.text_area("Persona Content", value=system_messages[persona_choice], height=100, disabled=(persona_choice != "custom"))
-        st.session_state.system_message = persona_content if persona_choice == "custom" else system_messages[persona_choice]
+        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["custom"], index=list(system_messages.keys()).index("default"))
+
+        if persona_choice == "custom":
+            st.session_state.custom_persona = st.text_area("Enter Custom Persona:", height=100)
+            st.session_state.persona = st.session_state.custom_persona
+        else:
+            st.session_state.persona = system_messages[persona_choice]
+            st.text_area("Persona Content:", value=st.session_state.persona, height=100, disabled=True)
 
         model_choice = st.selectbox("Choose Model:", options=list(config['models'].keys()), format_func=lambda x: config['models'][x]["name"])
 
