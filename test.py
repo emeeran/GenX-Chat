@@ -18,14 +18,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 # Set page config at the very beginning
-st.set_page_config(page_title="Groq-Chat", page_icon="https://shorturl.at/gVzj6", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Groq-Chat", page_icon="", layout="wide", initial_sidebar_state="expanded")
 
 # Import from our custom modules
 from config import load_config
 from api_handler import get_groq_client, get_async_groq_client, stream_llm_response, APIError
 from utils import play_audio, validate_prompt
 from auth import authenticate
-from sys_message import system_messages  
+from sys_message import system_messages
 try:
     config = load_config()
 except Exception as e:
@@ -55,7 +55,7 @@ def initialize_session_state():
     if "enable_audio" not in st.session_state:
         st.session_state.enable_audio = False
     if "language" not in st.session_state:
-        st.session_state.language = "english"
+        st.session_state.language = "English"
     if "custom_persona" not in st.session_state:
         st.session_state.custom_persona = ""
 
@@ -142,9 +142,9 @@ def update_token_count(tokens):
 def text_to_speech(text, lang):
     # Map full language names to gTTS language codes
     lang_map = {
-        "english": "en",
-        "tamil": "ta",
-        "hindi": "hi"
+        "English": "en",
+        "Tamil": "ta",
+        "Hindi": "hi"
     }
 
     # Get the correct language code
@@ -167,13 +167,13 @@ def reset_all():
     st.session_state.audio_base64 = ""
 
 def translate_text(text, target_lang):
-    if target_lang == "english":
+    if target_lang == "English":
         return text
     translator = GoogleTranslator(source='auto', target=target_lang)
     return translator.translate(text)
 
 def main():
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;">🤖 <i>Groq Fast Chat</i> 💬</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;" <i>Groq Chat</i> 💬</h1>""", unsafe_allow_html=True)
 
     with st.sidebar:
         st.title("🔧 Settings")
@@ -197,7 +197,7 @@ def main():
 
         st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
 
-        st.session_state.language = st.selectbox("Select Language:", ["english", "tamil", "hindi"])
+        st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
 
         persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["custom"], index=list(system_messages.keys()).index("default"))
 
@@ -241,7 +241,7 @@ def main():
                 st.markdown(message["content"])
 
     # Prompt input at the bottom
-    prompt = st.chat_input("Message Groq Fast Chat...")
+    prompt = st.chat_input("Fast Chat")
 
     if prompt:
         try:
