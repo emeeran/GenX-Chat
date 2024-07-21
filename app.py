@@ -5,27 +5,28 @@ import base64
 from gtts import gTTS
 import PyPDF2
 import docx
+import markdown
 from PIL import Image
 import pytesseract
+import io
 from deep_translator import GoogleTranslator
-from textblob import TextBlob
 from datetime import datetime
 from fpdf import FPDF
 
+# Ensure the current directory is in the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
+# Set page config at the very beginning
+st.set_page_config(page_title="Groq-Chat", page_icon="", layout="wide", initial_sidebar_state="expanded")
+
+# Import from our custom modules
 from config import load_config
 from api_handler import get_groq_client, get_async_groq_client, stream_llm_response, APIError
 from utils import play_audio, validate_prompt
 from auth import authenticate
 from sys_message import system_messages
 
-# Set the page configuration
-st.set_page_config(page_title="Groq-Chat", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
-
-# Ensure the current directory is in the Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-# Load configuration
 try:
     config = load_config()
 except Exception as e:
@@ -33,21 +34,26 @@ except Exception as e:
     st.stop()
 
 # Initialize session state
-for key, default_value in {
-    "messages": [],
-    "audio_base64": "",
-    "file_content": "",
-    "chat_histories": [],
-    "system_message": system_messages["Default"],
-    "user": None,
-    "model_params": {},
-    "total_tokens": 0,
-    "total_cost": 0,
-    "enable_audio": False,
-    "language": "english"
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default_value
+def initialize_session_state():
+    default_values = {
+        "messages": [],
+        "audio_base64": "",
+        "file_content": "",
+        "chat_histories": [],
+        "persona": system_messages["Default"],
+        "user": None,
+        "model_params": {},
+        "total_tokens": 0,
+        "total_cost": 0,
+        "enable_audio": False,
+        "language": "English",
+        "custom_persona": "Here enter your custom persona",
+    }
+    for key, value in default_values.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+initialize_session_state()
 
 # Groq API setup
 try:
@@ -63,32 +69,29 @@ def export_chat(format):
     filename = f"chat_exports/chat_history_{timestamp}.{format}"
     os.makedirs("chat_exports", exist_ok=True)
 
-    if format == "md":
-        with open(filename, "w") as f:
+    with open(filename, "w" if format == "md" else "wb") as f:
+        if format == "md":
             f.write(chat_history)
-    elif format == "pdf":
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 10, chat_history)
-        pdf.output(filename)
-        with open(filename, "rb") as f:
+        elif format == "pdf":
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            pdf.multi_cell(0, 10, chat_history)
+            pdf.output(f)
             st.download_button("Download PDF", f, file_name=filename)
 
 def process_uploaded_file(uploaded_file):
-    if uploaded_file.type == "application/pdf":
-        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-        return " ".join(page.extract_text() for page in pdf_reader.pages)
-    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = docx.Document(uploaded_file)
-        return " ".join(paragraph.text for paragraph in doc.paragraphs)
-    elif uploaded_file.type in ["text/plain", "text/markdown"]:
-        return uploaded_file.getvalue().decode("utf-8")
-    elif uploaded_file.type.startswith("image/"):
-        image = Image.open(uploaded_file)
-        return pytesseract.image_to_string(image)
-    else:
-        raise ValueError("Unsupported file type")
+    file_type_handlers = {
+        "application/pdf": lambda f: " ".join(page.extract_text() for page in PyPDF2.PdfReader(f).pages),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": lambda f: " ".join(paragraph.text for paragraph in docx.Document(f).paragraphs),
+        "text/plain": lambda f: f.getvalue().decode("utf-8"),
+        "text/markdown": lambda f: f.getvalue().decode("utf-8"),
+        "image/": lambda f: pytesseract.image_to_string(Image.open(f))
+    }
+    for file_type, handler in file_type_handlers.items():
+        if uploaded_file.type.startswith(file_type):
+            return handler(uploaded_file)
+    raise ValueError("Unsupported file type")
 
 def summarize_file(prompt):
     if st.session_state.file_content:
@@ -124,10 +127,14 @@ def load_chat_history(selected_history):
 
 def update_token_count(tokens):
     st.session_state.total_tokens += tokens
-    st.session_state.total_cost += tokens * 0.0001  # Adjust as needed
+    st.session_state.total_cost += tokens * 0.0001
 
 def text_to_speech(text, lang):
-    lang_map = {"english": "en", "tamil": "ta", "hindi": "hi"}
+    lang_map = {
+        "english": "en",
+        "tamil": "ta",
+        "hindi": "hi"
+    }
     lang_code = lang_map.get(lang.lower(), "en")
     tts = gTTS(text=text, lang=lang_code)
     audio_file = "temp_audio.mp3"
@@ -135,49 +142,38 @@ def text_to_speech(text, lang):
     with open(audio_file, "rb") as f:
         audio_bytes = f.read()
     os.remove(audio_file)
-    audio_base64 = base64.b64encode(audio_bytes).decode()
-    st.session_state.audio_base64 = audio_base64
+    st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
 
 def reset_all():
-    for key in ["messages", "total_tokens", "total_cost", "file_content", "audio_base64"]:
-        st.session_state[key] = ""
+    st.session_state.update({
+        "messages": [],
+        "total_tokens": 0,
+        "total_cost": 0,
+        "file_content": "",
+        "audio_base64": ""
+    })
 
 def translate_text(text, target_lang):
-    if target_lang == "english":
+    if target_lang == "English":
         return text
     translator = GoogleTranslator(source='auto', target=target_lang)
     return translator.translate(text)
 
-def analyze_sentiment(text):
-    blob = TextBlob(text)
-    return blob.sentiment.polarity
-
-def generate_contextual_response(client, model_params, user_input, conversation_history):
-    sentiment_score = analyze_sentiment(user_input)
-    sentiment = "positive" if sentiment_score > 0 else "negative" if sentiment_score < 0 else "neutral"
-
-    context = " ".join([msg["content"] for msg in conversation_history if msg["role"] == "user"])
-    full_prompt = f"Sentiment: {sentiment}\nContext: {context}\nUser: {user_input}\nAssistant:"
-
-    response = ""
-    for chunk in stream_llm_response(client, model_params, [{"role": "user", "content": full_prompt}]):
-        response += chunk
-
-    return response
-
 def main():
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;"> <i>Groq Fast Chat</i> 💬</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;"<i>NesiGroq Chat</i> 💬</h1>""", unsafe_allow_html=True)
 
     with st.sidebar:
         st.title("🔧 Settings")
 
+
+
         col1, col2 = st.columns(2)
         with col1:
-            st.button("📄 Save-PDF", on_click=export_chat, args=("pdf",))
+            st.button("📄 Exp.to PDF", on_click=export_chat, args=("pdf",))
             if st.button("Reset All"):
                 reset_all()
         with col2:
-            st.button("📄 Save-md", on_click=export_chat, args=("md",))
+            st.button("📄 Exp.to md", on_click=export_chat, args=("md",))
             if st.button("Save Chat"):
                 save_chat_history()
 
@@ -186,9 +182,17 @@ def main():
             load_chat_history(selected_history)
 
         st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
-        st.session_state.language = st.selectbox("Select Language:", ["english", "tamil", "hindi"])
-        system_message_choice = st.selectbox("System Message:", options=list(system_messages.keys()), index=list(system_messages.keys()).index("Default"))
-        st.session_state.system_message = system_messages[system_message_choice]
+
+        st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
+
+        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["Custom"], index=list(system_messages.keys()).index("Default"))
+
+        if persona_choice == "Custom":
+            st.session_state.custom_persona = st.text_area("Enter Custom Persona:", height=100)
+            st.session_state.persona = st.session_state.custom_persona
+        else:
+            st.session_state.persona = system_messages[persona_choice]
+            st.text_area("Persona Content:", value=st.session_state.persona, height=100, disabled=True)
 
         model_choice = st.selectbox("Choose Model:", options=list(config['models'].keys()), format_func=lambda x: config['models'][x]["name"])
 
@@ -220,27 +224,33 @@ def main():
     chat_container = st.container()
 
     with chat_container:
+        # Display chat history in a scrollable area
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    prompt = st.chat_input("Message Groq Fast Chat...")
+    # Prompt input at the bottom
+    prompt = st.chat_input("Fast Chat")
 
     if prompt:
         try:
             validate_prompt(prompt)
-            user_input = prompt
-            st.session_state.messages.append({"role": "user", "content": user_input})
+            if st.session_state.file_content:
+                prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
             with st.chat_message("assistant"):
                 response_container = st.empty()
                 full_response = ""
                 try:
-                    context_response = generate_contextual_response(client, st.session_state.model_params, user_input, st.session_state.messages)
-                    translated_response = translate_text(context_response, st.session_state.language)
+                    for chunk in stream_llm_response(client, st.session_state.model_params, st.session_state.messages):
+                        full_response += chunk
+                        response_container.markdown(full_response + "▌")
+
+                    translated_response = translate_text(full_response, st.session_state.language)
                     response_container.markdown(translated_response)
                     st.session_state.messages.append({"role": "assistant", "content": translated_response})
-                    update_token_count(len(context_response.split()))
+                    update_token_count(len(full_response.split()))
 
                     if st.session_state.enable_audio:
                         text_to_speech(translated_response, st.session_state.language)
@@ -253,8 +263,11 @@ def main():
         except ValueError as e:
             st.error(str(e))
 
+    # Scroll to the bottom of the chat
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
+
+
+
 
 if __name__ == "__main__":
     main()
-
