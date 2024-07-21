@@ -8,6 +8,7 @@ data/
 scrapped/
 *.yaml
 chat_exports/
+to_move/
 
 
 ### Python ###
