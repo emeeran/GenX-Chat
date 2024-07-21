@@ -185,9 +185,9 @@ def main():
 
         st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
 
-        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["Custom"], index=list(system_messages.keys()).index("Default"))
+        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["custom"], index=list(system_messages.keys()).index("Default"))
 
-        if persona_choice == "Custom":
+        if persona_choice == "custom":
             st.session_state.custom_persona = st.text_area("Enter Custom Persona:", height=100)
             st.session_state.persona = st.session_state.custom_persona
         else:
