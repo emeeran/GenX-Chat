@@ -7,7 +7,7 @@ articles/
 data/
 scrapped/
 *.yaml
-
+chat_exports/
 
 
 ### Python ###
