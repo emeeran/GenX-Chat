@@ -9,7 +9,7 @@ scrapped/
 *.yaml
 chat_exports/
 to_move/
-
+local/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
