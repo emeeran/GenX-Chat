@@ -4,7 +4,7 @@ import sys
 import base64
 from gtts import gTTS
 import PyPDF2
-import docx
+import docx  # Correct import for handling DOCX files
 import markdown
 from PIL import Image
 import pytesseract
@@ -12,26 +12,83 @@ import io
 from deep_translator import GoogleTranslator
 from datetime import datetime
 from fpdf import FPDF
+from dotenv import load_dotenv
+import requests
 
-# Ensure the current directory is in the Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+# Load environment variables
+load_dotenv()
+
+
+
 
 # Set page config at the very beginning
 st.set_page_config(page_title="Groq-Chat", page_icon="", layout="wide", initial_sidebar_state="expanded")
 
-# Import from our custom modules
-from config import load_config
-from api_handler import get_groq_client, get_async_groq_client, stream_llm_response, APIError
-from utils import play_audio, validate_prompt
-from auth import authenticate
-from sys_message import system_messages
+# Function to load configuration
+def load_config():
+    return {
+        'api_key': os.getenv('GROQ_API_KEY'),
+        'models': {
+            'llama-3.1-405b-reasoning': {
+                'name': 'Llama 3.1 405B (Preview)',
+                'tokens': 16000
+            },
+            'llama-3.1-70b-versatile': {
+                'name': 'Llama 3.1 70B (Preview)',
+                'tokens': 8000
+            },
+            'llama-3.1-8b-instant': {
+                'name': 'Llama 3.1 8B (Preview)',
+                'tokens': 8000
+            },
+            'llama3-groq-70b-8192-tool-use-preview': {
+                'name': 'Llama 3 Groq 70B Tool Use (Preview)',
+                'tokens': 8192
+            },
+            'llama3-groq-8b-8192-tool-use-preview': {
+                'name': 'Llama 3 Groq 8B Tool Use (Preview)',
+                'tokens': 8192
+            },
+            'llama3-70b-8192': {
+                'name': 'Meta Llama 3 70B',
+                'tokens': 8192
+            },
+            'llama3-8b-8192': {
+                'name': 'Meta Llama 3 8B',
+                'tokens': 8192
+            },
+            'mixtral-8x7b-32768': {
+                'name': 'Mixtral 8x7B',
+                'tokens': 32768
+            },
+            'gemma-7b-it': {
+                'name': 'Gemma 7B',
+                'tokens': 8192
+            },
+            'gemma2-9b-it': {
+                'name': 'Gemma 2 9B',
+                'tokens': 8192
+            },
+            'whisper-large-v3': {
+                'name': 'Whisper',
+                'tokens': 8192
+            },
+        }
+    }
 
-try:
-    config = load_config()
-except Exception as e:
-    st.error(f"Failed to load configuration: {str(e)}")
-    st.stop()
+# Function to get Groq client
+def get_groq_client(api_key):
+    return api_key
+
+# Function to stream LLM response
+def stream_llm_response(api_key, model_params, messages):
+    # Simulated response
+    yield "Simulated response. Replace with actual API call."
+
+# Function to validate prompt
+def validate_prompt(prompt):
+    if not prompt.strip():
+        raise ValueError("Prompt cannot be empty")
 
 # Initialize session state
 def initialize_session_state():
@@ -40,7 +97,7 @@ def initialize_session_state():
         "audio_base64": "",
         "file_content": "",
         "chat_histories": [],
-        "persona": system_messages["Default"],
+        "persona": "Default Persona",
         "user": None,
         "model_params": {},
         "total_tokens": 0,
@@ -55,14 +112,21 @@ def initialize_session_state():
 
 initialize_session_state()
 
+# Load config
+try:
+    config = load_config()
+except Exception as e:
+    st.error(f"Failed to load configuration: {str(e)}")
+    st.stop()
+
 # Groq API setup
 try:
     client = get_groq_client(config['api_key'])
-    async_client = get_async_groq_client(config['api_key'])
 except Exception as e:
     st.error(f"Failed to create Groq API clients: {str(e)}")
     st.stop()
 
+# Function to export chat
 def export_chat(format):
     chat_history = "\n\n".join([f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages])
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -80,6 +144,7 @@ def export_chat(format):
             pdf.output(f)
             st.download_button("Download PDF", f, file_name=filename)
 
+# Function to process uploaded file
 def process_uploaded_file(uploaded_file):
     file_type_handlers = {
         "application/pdf": lambda f: " ".join(page.extract_text() for page in PyPDF2.PdfReader(f).pages),
@@ -93,6 +158,7 @@ def process_uploaded_file(uploaded_file):
             return handler(uploaded_file)
     raise ValueError("Unsupported file type")
 
+# Function to summarize file
 def summarize_file(prompt):
     if st.session_state.file_content:
         full_prompt = f"{prompt}\n\nContent:\n{st.session_state.file_content[:4000]}..."
@@ -107,11 +173,12 @@ def summarize_file(prompt):
                 summary += chunk
             st.session_state.messages.append({"role": "assistant", "content": summary})
             update_token_count(len(summary.split()))
-        except APIError as e:
+        except Exception as e:
             st.error(f"Error summarizing file: {str(e)}")
     else:
         st.warning("Please upload a file first.")
 
+# Function to save chat history
 def save_chat_history():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     st.session_state.chat_histories.append({
@@ -119,16 +186,19 @@ def save_chat_history():
         "messages": st.session_state.messages.copy()
     })
 
+# Function to load chat history
 def load_chat_history(selected_history):
     for history in st.session_state.chat_histories:
         if history["name"] == selected_history:
             st.session_state.messages = history["messages"].copy()
             break
 
+# Function to update token count
 def update_token_count(tokens):
     st.session_state.total_tokens += tokens
     st.session_state.total_cost += tokens * 0.0001
 
+# Function for text-to-speech
 def text_to_speech(text, lang):
     lang_map = {
         "english": "en",
@@ -144,6 +214,7 @@ def text_to_speech(text, lang):
     os.remove(audio_file)
     st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
 
+# Function to reset all states
 def reset_all():
     st.session_state.update({
         "messages": [],
@@ -153,19 +224,19 @@ def reset_all():
         "audio_base64": ""
     })
 
+# Function to translate text
 def translate_text(text, target_lang):
     if target_lang == "English":
         return text
     translator = GoogleTranslator(source='auto', target=target_lang)
     return translator.translate(text)
 
+# Main function
 def main():
     st.markdown("""<h1 style="text-align: center; color: #6ca395;"<i>NesiGroq Chat</i> 💬</h1>""", unsafe_allow_html=True)
 
     with st.sidebar:
         st.title("🔧 Settings")
-
-
 
         col1, col2 = st.columns(2)
         with col1:
@@ -185,13 +256,13 @@ def main():
 
         st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
 
-        persona_choice = st.selectbox("Persona:", options=list(system_messages.keys()) + ["custom"], index=list(system_messages.keys()).index("Default"))
+        persona_choice = st.selectbox("Persona:", options=["Default", "Custom"], index=0)
 
-        if persona_choice == "custom":
+        if persona_choice == "Custom":
             st.session_state.custom_persona = st.text_area("Enter Custom Persona:", height=100)
             st.session_state.persona = st.session_state.custom_persona
         else:
-            st.session_state.persona = system_messages[persona_choice]
+            st.session_state.persona = "Default Persona"
             st.text_area("Persona Content:", value=st.session_state.persona, height=100, disabled=True)
 
         model_choice = st.selectbox("Choose Model:", options=list(config['models'].keys()), format_func=lambda x: config['models'][x]["name"])
@@ -256,8 +327,6 @@ def main():
                         text_to_speech(translated_response, st.session_state.language)
                         st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
 
-                except APIError as e:
-                    st.error(f"API Error: {str(e)}")
                 except Exception as e:
                     st.error(f"An unexpected error occurred: {str(e)}")
         except ValueError as e:
@@ -265,9 +334,6 @@ def main():
 
     # Scroll to the bottom of the chat
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
-
-
-
 
 if __name__ == "__main__":
     main()
