@@ -234,17 +234,15 @@ def main():
 
     # --- Sidebar ---
     with st.sidebar:
-        st.markdown('<h2 style="text-align: center; color: #6ca395;">📄 Created & Maintained by:</h2>', unsafe_allow_html=True)
-        st.markdown('<h3 style="text-align: center; color: #6ca395;">Meeran E Mandhini</h3>', unsafe_allow_html=True)
         st.title("🔧 Settings")
 
         # Chat Settings
         with st.expander("Chat Settings"):
             col1, col2 = st.columns(2)
             with col1:
-                st.button("Reset All", on_click=lambda: st.session_state.clear())
+                st.button("Reset", on_click=lambda: st.session_state.clear())
             with col2:
-                st.button("Save Chat History", on_click=save_chat_history)
+                st.button("Save", on_click=save_chat_history)
 
             chat_history_names = [history["name"] for history in st.session_state.chat_histories]
             selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
@@ -356,6 +354,10 @@ def main():
                     exec(st.session_state.code_editor_content)
                 except Exception as e:
                     st.error(f"Error executing code: {str(e)}")
+                    
+        st.markdown('<h3 style="text-align: center; color: #6ca395;">📄 Created & Maintained by:</h3>', unsafe_allow_html=True)
+        st.markdown('<h2 style="text-align: center; color: #6ca395;">Meeran E Mandhini</h2>', unsafe_allow_html=True)
+
 
     # --- Main Chat Interface ---
     chat_container = st.container()
