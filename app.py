@@ -10,7 +10,7 @@ from deep_translator import GoogleTranslator
 from datetime import datetime
 from fpdf import FPDF
 from dotenv import load_dotenv
-import groq
+from groq import Groq
 import logging
 from typing import List, Dict, Any
 import asyncio
@@ -32,20 +32,20 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 # --- Utility Functions ---
-def get_groq_client(api_key: str) -> groq.Groq:
+def get_groq_client(api_key: str) -> Groq:
     """Returns a Groq client instance."""
     try:
-        return groq.Groq(api_key=api_key)
+        return Groq(api_key=api_key)
     except Exception as e:
         logger.error(f"Failed to initialize Groq client: {str(e)}")
         return None
 
-async def async_stream_llm_response(client: groq.Groq, params: Dict[str, Any], messages: List[Dict[str, str]]):
+async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messages: List[Dict[str, str]]):
     """Streams the LLM response from the Groq API."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "https://api.groq.com/v1/chat/completions",  # Corrected URL
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {API_KEY}",
                     "Content-Type": "application/json"
@@ -53,9 +53,9 @@ async def async_stream_llm_response(client: groq.Groq, params: Dict[str, Any], m
                 json={
                     "model": params["model"],
                     "messages": messages,
-                    "max_tokens": params["max_tokens"],
-                    "temperature": params["temperature"],
-                    "top_p": params["top_p"],
+                    "max_tokens": params.get("max_tokens"),
+                    "temperature": params.get("temperature"),
+                    "top_p": params.get("top_p"),
                     "stream": True,
                 },
             ) as response:
@@ -192,7 +192,7 @@ def initialize_session_state():
         "file_content": "",
         "chat_histories": [],
         "persona": "Default",
-        "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 1024, "temperature": 0.7, "top_p": 0.9},
+        "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 1024, "temperature": 1.0, "top_p": 1.0},
         "total_tokens": 0,
         "total_cost": 0,
         "enable_audio": False,
@@ -260,28 +260,31 @@ def main():
             st.session_state.model_params["model"] = st.selectbox(
                 "Choose Model:",
                 options=[
-                    "llama-3.1-70b-versatile",
                     "llama-3.1-405b-reasoning",
+                    "llama-3.1-70b-versatile",
                     "llama-3.1-8b-instant",
                     "llama3-groq-70b-8192-tool-use-preview",
                     "llama3-70b-8192",
                     "mixtral-8x7b-32768",
                     "gemma2-9b-it",
+                    "whisper-large-v3"
                 ],
             )
 
             # Adjust max tokens based on model
             max_token_limit = 4096
-            if st.session_state.model_params["model"] in ["llama3-groq-70b-8192-tool-use-preview", "llama3-70b-8192"]:
-                max_token_limit = 8192
-            elif st.session_state.model_params["model"] == "mixtral-8x7b-32768":
+            if st.session_state.model_params["model"] == "mixtral-8x7b-32768":
                 max_token_limit = 32768
+            elif st.session_state.model_params["model"] == "llama2-70b-4096":
+                max_token_limit = 4096
+            elif st.session_state.model_params["model"] == "gemma-7b-it":
+                max_token_limit = 8192  # Assuming based on previous model, adjust if different
 
             st.session_state.model_params["max_tokens"] = st.slider(
                 "Max Tokens:", min_value=1, max_value=max_token_limit, value=min(1024, max_token_limit), step=1
             )
-            st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 1.0, 0.7, 0.1)
-            st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, 0.9, 0.1)
+            st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 2.0, 1.0, 0.1)
+            st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, 1.0, 0.1)
 
         # File Upload and Code Analysis
         with st.expander("File Upload"):
@@ -361,7 +364,7 @@ def main():
 
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
 
-async def process_chat_input(prompt: str, client: groq.Groq):
+async def process_chat_input(prompt: str, client: Groq):
     """Processes chat input and gets a response."""
     try:
         validate_prompt(prompt)
