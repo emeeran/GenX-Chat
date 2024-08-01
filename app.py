@@ -198,6 +198,7 @@ def initialize_session_state():
         "file_content": "",
         "chat_histories": [],
         "persona": "Default",
+        "custom_persona": "",  # Added for custom persona input
         "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 11024, "temperature": 1.0, "top_p": 1.0},
         "total_tokens": 0,
         "total_cost": 0,
@@ -244,7 +245,12 @@ def main():
         with st.expander("Chat Settings"):
             col1, col2 = st.columns(2)
             with col1:
-                st.button("Reset All", on_click=lambda: st.session_state.clear())
+                st.button("Reset Chat", on_click=lambda: st.session_state.update({
+                    "messages": [],
+                    "file_content": "",
+                    "total_tokens": 0,
+                    "total_cost": 0,
+                }))
             with col2:
                 st.button("Save Chat", on_click=save_chat_history)
 
@@ -260,9 +266,13 @@ def main():
 
         # Persona Settings
         with st.expander("Persona Settings"):
-            persona_options = list(PERSONAS.keys())
+            persona_options = list(PERSONAS.keys()) + ["Custom"]
             st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
-            st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
+
+            if st.session_state.persona == "Custom":
+                st.session_state.custom_persona = st.text_area("Custom Persona Description:", value=st.session_state.custom_persona, height=100)
+            else:
+                st.text_area("Persona Description:", value=PERSONAS.get(st.session_state.persona, ""), height=100, disabled=True)
 
         # Model Settings
         with st.expander("Model Settings"):
@@ -384,8 +394,14 @@ async def process_chat_input(prompt: str, client: Groq):
         if st.session_state.file_content:
             prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
 
+        # Use custom persona if selected and defined
+        if st.session_state.persona == "Custom" and st.session_state.custom_persona:
+            system_message = st.session_state.custom_persona
+        else:
+            system_message = PERSONAS.get(st.session_state.persona, "")
+
         messages = [
-            {"role": "system", "content": PERSONAS[st.session_state.persona]},
+            {"role": "system", "content": system_message},
             *st.session_state.messages,
             {"role": "user", "content": prompt},
         ]
