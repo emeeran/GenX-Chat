@@ -1,105 +1,198 @@
-import streamlit as st
 import os
-import sys
 import base64
 from gtts import gTTS
 import PyPDF2
-import docx  # Correct import for handling DOCX files
+import docx
 import markdown
 from PIL import Image
 import pytesseract
-import io
 from deep_translator import GoogleTranslator
 from datetime import datetime
 from fpdf import FPDF
 from dotenv import load_dotenv
-import requests
+import groq
+import logging
+from typing import List, Dict, Any
+import asyncio
+import aiohttp
+from streamlit_ace import st_ace
+import streamlit as st
+import html
+import json
+from persona import PERSONAS  # Assuming you have a persona.py file
 
-# Load environment variables
+# --- Global Settings and Constants ---
 load_dotenv()
+API_KEY = os.getenv("GROQ_API_KEY")
+if API_KEY is None:
+    st.error("GROQ_API_KEY environment variable not set. Please set it in your .env file.")
+    st.stop()
 
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
 
+# --- Utility Functions ---
+def get_groq_client(api_key: str) -> groq.Groq:
+    """Returns a Groq client instance."""
+    try:
+        return groq.Groq(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize Groq client: {str(e)}")
+        return None
 
+async def async_stream_llm_response(client: groq.Groq, params: Dict[str, Any], messages: List[Dict[str, str]]):
+    """Streams the LLM response from the Groq API."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.groq.com/v1/chat/completions",  # Corrected URL
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": params["model"],
+                    "messages": messages,
+                    "max_tokens": params["max_tokens"],
+                    "temperature": params["temperature"],
+                    "top_p": params["top_p"],
+                    "stream": True,
+                },
+            ) as response:
+                if response.status != 200:
+                    error_data = await response.json()
+                    error_message = error_data.get('error', {}).get('message', 'Unknown error')
+                    logger.error(f"API Error: {response.status} - {error_message}")
+                    yield f"API Error: {response.status} - {error_message}" 
+                    return
 
-# Set page config at the very beginning
-st.set_page_config(page_title="Groq-Chat", page_icon="", layout="wide", initial_sidebar_state="expanded")
+                async for line in response.content:
+                    if line.startswith(b"data: "):
+                        chunk = json.loads(line[6:])
+                        if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
+                            yield chunk["choices"][0]["delta"]["content"]
+    except Exception as e:
+        logger.error(f"Error in API call: {str(e)}")
+        yield f"Error in API call: {str(e)}"
 
-# Function to load configuration
-def load_config():
-    return {
-        'api_key': os.getenv('GROQ_API_KEY'),
-        'models': {
-            'llama-3.1-405b-reasoning': {
-                'name': 'Llama 3.1 405B (Preview)',
-                'tokens': 16000
-            },
-            'llama-3.1-70b-versatile': {
-                'name': 'Llama 3.1 70B (Preview)',
-                'tokens': 8000
-            },
-            'llama-3.1-8b-instant': {
-                'name': 'Llama 3.1 8B (Preview)',
-                'tokens': 8000
-            },
-            'llama3-groq-70b-8192-tool-use-preview': {
-                'name': 'Llama 3 Groq 70B Tool Use (Preview)',
-                'tokens': 8192
-            },
-            'llama3-groq-8b-8192-tool-use-preview': {
-                'name': 'Llama 3 Groq 8B Tool Use (Preview)',
-                'tokens': 8192
-            },
-            'llama3-70b-8192': {
-                'name': 'Meta Llama 3 70B',
-                'tokens': 8192
-            },
-            'llama3-8b-8192': {
-                'name': 'Meta Llama 3 8B',
-                'tokens': 8192
-            },
-            'mixtral-8x7b-32768': {
-                'name': 'Mixtral 8x7B',
-                'tokens': 32768
-            },
-            'gemma-7b-it': {
-                'name': 'Gemma 7B',
-                'tokens': 8192
-            },
-            'gemma2-9b-it': {
-                'name': 'Gemma 2 9B',
-                'tokens': 8192
-            },
-            'whisper-large-v3': {
-                'name': 'Whisper',
-                'tokens': 8192
-            },
-        }
-    }
-
-# Function to get Groq client
-def get_groq_client(api_key):
-    return api_key
-
-# Function to stream LLM response
-def stream_llm_response(api_key, model_params, messages):
-    # Simulated response
-    yield "Simulated response. Replace with actual API call."
-
-# Function to validate prompt
-def validate_prompt(prompt):
+def validate_prompt(prompt: str):
+    """Validates the user prompt."""
     if not prompt.strip():
         raise ValueError("Prompt cannot be empty")
 
-# Initialize session state
+def process_uploaded_file(uploaded_file):
+    """Processes uploaded files and extracts content."""
+    file_handlers = {
+        "application/pdf": lambda f: " ".join(page.extract_text() for page in PyPDF2.PdfReader(f).pages),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": lambda f: " ".join(paragraph.text for paragraph in docx.Document(f).paragraphs),
+        "text/plain": lambda f: f.getvalue().decode("utf-8"),
+        "text/markdown": lambda f: f.getvalue().decode("utf-8"),
+        "image/jpeg": lambda f: pytesseract.image_to_string(Image.open(f)),
+        "image/png": lambda f: pytesseract.image_to_string(Image.open(f)),
+        "text/x-python": lambda f: f.getvalue().decode("utf-8"),
+    }
+    for file_type, handler in file_handlers.items():
+        if uploaded_file.type.startswith(file_type):
+            return handler(uploaded_file)
+    raise ValueError("Unsupported file type")
+
+def text_to_speech(text: str, lang: str):
+    """Converts text to speech."""
+    lang_map = {"english": "en", "tamil": "ta", "hindi": "hi"}
+    lang_code = lang_map.get(lang.lower(), "en")
+    tts = gTTS(text=text, lang=lang_code)
+    audio_file = "temp_audio.mp3"
+    tts.save(audio_file)
+    with open(audio_file, "rb") as f:
+        audio_bytes = f.read()
+    os.remove(audio_file)
+    st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
+
+def translate_text(text: str, target_lang: str) -> str:
+    """Translates text."""
+    if target_lang == "English":
+        return text
+    translator = GoogleTranslator(source="auto", target=target_lang)
+    return translator.translate(text)
+
+def update_token_count(tokens: int):
+    """Updates the token count."""
+    st.session_state.total_tokens += tokens
+    st.session_state.total_cost += tokens * 0.0001  # Assuming a cost per token
+
+def export_chat(format: str):
+    """Exports the chat history."""
+    chat_history = "\n\n".join([f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages])
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"chat_exports/chat_history_{timestamp}.{format}"
+    os.makedirs("chat_exports", exist_ok=True)
+
+    if format == "md":
+        with open(filename, "w") as f:
+            f.write(chat_history)
+        st.download_button("Download Markdown", filename, file_name=filename)
+    elif format == "pdf":
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.multi_cell(0, 10, chat_history)
+        pdf.output(filename)
+        st.download_button("Download PDF", filename, file_name=filename)
+
+# --- Chat History Management ---
+def save_chat_history():
+    """Saves the chat history."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    st.session_state.chat_histories.append({"name": f"Chat {timestamp}", "messages": st.session_state.messages.copy()})
+
+def load_chat_history(selected_history: str):
+    """Loads a chat history."""
+    for history in st.session_state.chat_histories:
+        if history["name"] == selected_history:
+            st.session_state.messages = history["messages"].copy()
+            break
+
+# --- Code Analysis (Placeholder) ---
+def analyze_code(code: str) -> List[str]:
+    """Placeholder for code analysis."""
+    return ["Code analysis is not yet implemented."]
+
+# --- Content Creation (Uses LLM) ---
+async def create_content(prompt: str, content_type: str) -> str:
+    """Generates content using the LLM."""
+    full_prompt = f"Write a {content_type} based on this prompt: {prompt}"
+    generated_content = ""
+    async for chunk in async_stream_llm_response(
+        get_groq_client(API_KEY),
+        st.session_state.model_params,
+        [{"role": "user", "content": full_prompt}],
+    ):
+        generated_content += chunk
+    return generated_content
+
+# --- Summarization (Uses LLM) ---
+async def summarize_text(text: str, summary_type: str) -> str:
+    """Summarizes text using the LLM."""
+    full_prompt = f"Please provide a {summary_type} of the following text: {text}"
+    summary = ""
+    async for chunk in async_stream_llm_response(
+        get_groq_client(API_KEY),
+        st.session_state.model_params,
+        [{"role": "user", "content": full_prompt}],
+    ):
+        summary += chunk
+    return summary
+
+# --- Initialize Session State ---
 def initialize_session_state():
+    """Initializes session state."""
     default_values = {
         "messages": [],
         "audio_base64": "",
         "file_content": "",
         "chat_histories": [],
-        "persona": "Default Persona",
-        "user": None,
-        "model_params": {},
+        "persona": "Default",
+        "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 1024, "temperature": 0.7, "top_p": 0.9},
         "total_tokens": 0,
         "total_cost": 0,
         "enable_audio": False,
@@ -114,242 +207,193 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-initialize_session_state()
-
-# Load config
-try:
-    config = load_config()
-except Exception as e:
-    st.error(f"Failed to load configuration: {str(e)}")
-    st.stop()
-
-# Groq API setup
-try:
-    client = get_groq_client(config['api_key'])
-except Exception as e:
-    st.error(f"Failed to create Groq API clients: {str(e)}")
-    st.stop()
-
-# Function to export chat
-def export_chat(format):
-    chat_history = "\n\n".join([f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages])
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"chat_exports/chat_history_{timestamp}.{format}"
-    os.makedirs("chat_exports", exist_ok=True)
-
-    with open(filename, "w" if format == "md" else "wb") as f:
-        if format == "md":
-            f.write(chat_history)
-        elif format == "pdf":
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            pdf.multi_cell(0, 10, chat_history)
-            pdf.output(f)
-            st.download_button("Download PDF", f, file_name=filename)
-
-# Function to process uploaded file
-def process_uploaded_file(uploaded_file):
-    file_type_handlers = {
-        "application/pdf": lambda f: " ".join(
-            page.extract_text() for page in PyPDF2.PdfReader(f).pages
-        ),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": lambda f: " ".join(
-            paragraph.text for paragraph in docx.Document(f).paragraphs
-        ),
-        "text/plain": lambda f: f.getvalue().decode("utf-8"),
-        "text/markdown": lambda f: f.getvalue().decode("utf-8"),
-        "image/": lambda f: pytesseract.image_to_string(Image.open(f)),
-        "text/x-python": lambda f: f.getvalue().decode("utf-8"),
-    }
-    for file_type, handler in file_type_handlers.items():
-        if uploaded_file.type.startswith(file_type):
-            return handler(uploaded_file)
-    raise ValueError("Unsupported file type")
-
-# Function to summarize file
-def summarize_file(prompt):
-    if st.session_state.file_content:
-        full_prompt = f"{prompt}\n\nContent:\n{st.session_state.file_content[:4000]}..."
-        st.session_state.messages.extend([
-            {"role": "user", "content": f"Summarize the uploaded file: {prompt}"},
-            {"role": "assistant", "content": "Certainly! I'll summarize the file content based on your prompt."}
-        ])
-
-        try:
-            summary = ""
-            for chunk in stream_llm_response(client, st.session_state.model_params, [{"role": "user", "content": full_prompt}]):
-                summary += chunk
-            st.session_state.messages.append({"role": "assistant", "content": summary})
-            update_token_count(len(summary.split()))
-        except Exception as e:
-            st.error(f"Error summarizing file: {str(e)}")
-    else:
-        st.warning("Please upload a file first.")
-
-# Function to save chat history
-def save_chat_history():
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    st.session_state.chat_histories.append(
-        {
-            "name": f"Chat {timestamp}",
-            "messages": st.session_state.messages.copy(),
-        }
-    )
-
-# Function to load chat history
-def load_chat_history(selected_history):
-    for history in st.session_state.chat_histories:
-        if history["name"] == selected_history:
-            st.session_state.messages = history["messages"].copy()
-            break
-
-# Function to update token count
-def update_token_count(tokens):
-    st.session_state.total_tokens += tokens
-    st.session_state.total_cost += tokens * 0.0001
-
-# Function for text-to-speech
-def text_to_speech(text, lang):
-    lang_map = {
-        "english": "en",
-        "tamil": "ta",
-        "hindi": "hi"
-    }
-    lang_code = lang_map.get(lang.lower(), "en")
-    tts = gTTS(text=text, lang=lang_code)
-    audio_file = "temp_audio.mp3"
-    tts.save(audio_file)
-    with open(audio_file, "rb") as f:
-        audio_bytes = f.read()
-    os.remove(audio_file)
-    st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
-
-# Function to reset all states
-def reset_all():
-    st.session_state.update(
-        {
-            "messages": [],
-            "total_tokens": 0,
-            "total_cost": 0,
-            "file_content": "",
-            "audio_base64": "",
-            "code_editor_content": "",
-        }
-    )
-
-# Function to translate text
-def translate_text(text, target_lang):
-    if target_lang == "English":
-        return text
-    translator = GoogleTranslator(source="auto", target=target_lang)
-    return translator.translate(text)
-
-# Main function
+# --- Main Streamlit Application ---
 def main():
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;"<i>NesiGroq Chat</i> 💬</h1>""", unsafe_allow_html=True)
+    """Main Streamlit app function."""
+    initialize_session_state()
+    client = get_groq_client(API_KEY)
+    if client is None:
+        st.error("Failed to initialize Groq client. Please check your API key and try again.")
+        return
 
-    # Sidebar
+    st.set_page_config(
+        page_title="Enhanced Groq-Chat",
+        page_icon="💬",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    st.markdown('<h1 style="text-align: center; color: #6ca395;">Enhanced Groq-Chat 💬</h1>', unsafe_allow_html=True)
+
+    # --- Sidebar ---
     with st.sidebar:
+        st.markdown('<h2 style="text-align: center; color: #6ca395;">📄 Created & Maintained by:</h2>', unsafe_allow_html=True)
+        st.markdown('<h3 style="text-align: center; color: #6ca395;">Meeran E Mandhini</h3>', unsafe_allow_html=True)
         st.title("🔧 Settings")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.button("📄 Exp.to PDF", on_click=export_chat, args=("pdf",))
-            if st.button("Reset All"):
-                reset_all()
-        with col2:
-            st.button("📄 Exp.to md", on_click=export_chat, args=("md",))
-            if st.button("Save Chat"):
-                save_chat_history()
+        # Chat Settings
+        with st.expander("Chat Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.button("Reset All", on_click=lambda: st.session_state.clear())
+            with col2:
+                st.button("Save Chat History", on_click=save_chat_history)
 
-        selected_history = st.selectbox("Load Chat", options=[h["name"] for h in st.session_state.chat_histories])
-        if st.button("Load"):
-            load_chat_history(selected_history)
+            chat_history_names = [history["name"] for history in st.session_state.chat_histories]
+            selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
+            if selected_history:
+                load_chat_history(selected_history)
 
-        st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
+        # Audio Settings
+        with st.expander("Audio Settings"):
+            st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
+            st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
 
-        st.session_state.language = st.selectbox("Select Language:", ["English", "Tamil", "Hindi"])
+        # Persona Settings
+        with st.expander("Persona Settings"):
+            persona_options = list(PERSONAS.keys())
+            st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
+            st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
 
-        persona_choice = st.selectbox("Persona:", options=["Default", "Custom"], index=0)
+        # Model Settings
+        with st.expander("Model Settings"):
+            st.session_state.model_params["model"] = st.selectbox(
+                "Choose Model:",
+                options=[
+                    "llama-3.1-70b-versatile",
+                    "llama-3.1-405b-reasoning",
+                    "llama-3.1-8b-instant",
+                    "llama3-groq-70b-8192-tool-use-preview",
+                    "llama3-70b-8192",
+                    "mixtral-8x7b-32768",
+                    "gemma2-9b-it",
+                ],
+            )
 
-        if persona_choice == "Custom":
-            st.session_state.custom_persona = st.text_area("Enter Custom Persona:", height=100)
-            st.session_state.persona = st.session_state.custom_persona
-        else:
-            st.session_state.persona = "Default Persona"
-            st.text_area("Persona Content:", value=st.session_state.persona, height=100, disabled=True)
+            # Adjust max tokens based on model
+            max_token_limit = 4096
+            if st.session_state.model_params["model"] in ["llama3-groq-70b-8192-tool-use-preview", "llama3-70b-8192"]:
+                max_token_limit = 8192
+            elif st.session_state.model_params["model"] == "mixtral-8x7b-32768":
+                max_token_limit = 32768
 
-        model_choice = st.selectbox("Choose Model:", options=list(config['models'].keys()), format_func=lambda x: config['models'][x]["name"])
+            st.session_state.model_params["max_tokens"] = st.slider(
+                "Max Tokens:", min_value=1, max_value=max_token_limit, value=min(1024, max_token_limit), step=1
+            )
+            st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 1.0, 0.7, 0.1)
+            st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, 0.9, 0.1)
 
-        with st.expander("Advanced Model Parameters"):
-            max_tokens = st.slider("Max Tokens:", min_value=512, max_value=config['models'][model_choice]["tokens"], value=4096, step=512)
-            model_temp = st.slider("Temperature:", min_value=0.0, max_value=2.0, value=0.7, step=0.1)
-            top_p = st.slider("Top-p:", min_value=0.0, max_value=1.0, value=0.9, step=0.1)
+        # File Upload and Code Analysis
+        with st.expander("File Upload"):
+            uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png", "py"])
+            if uploaded_file:
+                try:
+                    st.session_state.file_content = process_uploaded_file(uploaded_file)
+                    st.success("File processed successfully")
+                    if uploaded_file.type == "text/x-python":
+                        st.session_state.show_analysis = st.checkbox("Show Code Analysis", value=False)
+                        if st.session_state.show_analysis:
+                            analysis_result = analyze_code(st.session_state.file_content)
+                            for result in analysis_result:
+                                st.write(result)
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
 
-        st.session_state.model_params = {
-            "model": model_choice,
-            "temperature": model_temp,
-            "max_tokens": max_tokens,
-            "top_p": top_p
-        }
+        # Export Chat
+        with st.expander("Export Chat"):
+            export_format = st.selectbox("Export Format", ["md", "pdf"])
+            st.button("Export Chat", on_click=lambda: export_chat(export_format))
 
-        uploaded_file = st.file_uploader("Upload File", type=["pdf", "docx", "txt", "md", "png", "jpg", "jpeg"])
-        if uploaded_file:
-            try:
-                st.session_state.file_content = process_uploaded_file(uploaded_file)
-                st.success("File uploaded successfully!")
-                st.info("You can now ask questions about the uploaded file in the main chat.")
-            except Exception as e:
-                st.error(f"Error processing file: {str(e)}")
+        # Content Creation Mode
+        with st.expander("Content Creation"):
+            st.session_state.content_creation_mode = st.checkbox("Enable Content Creation Mode", value=False)
+            if st.session_state.content_creation_mode:
+                content_prompt = st.text_area("Enter your creative prompt:")
+                content_type = st.selectbox("Select Content Type:", ["Story", "Poem", "Article"])
+                if st.button("Generate Content") and content_prompt:
+                    with st.spinner("Generating..."):
+                        generated_content = asyncio.run(create_content(content_prompt, content_type))
+                        st.write("## Generated Content:")
+                        st.write(generated_content)
+                elif st.button("Generate Content") and not content_prompt:
+                    st.warning("Please enter a prompt.")
 
-        st.write(f"Total Tokens: {st.session_state.total_tokens}")
-        st.write(f"Total Cost: ${st.session_state.total_cost:.4f}")
+        # Summarization Mode
+        with st.expander("Summarization"):
+            st.session_state.show_summarization = st.checkbox("Enable Summarization", value=False)
+            if st.session_state.show_summarization:
+                st.session_state.summarization_type = st.selectbox(
+                    "Summarization Type:",
+                    ["Main Takeaways", "Main points bulleted", "Concise Summary", "Executive Summary"],
+                )
+                if st.button("Summarize"):
+                    text_to_summarize = st.session_state.file_content if st.session_state.file_content else st.session_state.get("text_to_summarize", "")
+                    if text_to_summarize:
+                        with st.spinner("Summarizing..."):
+                            summary = asyncio.run(summarize_text(text_to_summarize, st.session_state.summarization_type))
+                            st.write("## Summary:")
+                            st.write(summary)
+                    else:
+                        st.warning("Please upload a file or enter text to summarize.")
 
-    # Main chat interface
+        # Code Editor
+        with st.expander("Code Editor"):
+            st.session_state.code_editor_content = st_ace(
+                value=st.session_state.code_editor_content, language="python", theme="monokai", key="code_editor"
+            )
+            if st.button("Run Code"):
+                try:
+                    exec(st.session_state.code_editor_content)
+                except Exception as e:
+                    st.error(f"Error executing code: {str(e)}")
+
+    # --- Main Chat Interface ---
     chat_container = st.container()
-
     with chat_container:
-        # Display chat history in a scrollable area
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    # Prompt input at the bottom
-    prompt = st.chat_input("Fast Chat")
-
+    # --- Prompt Input ---
+    prompt = st.chat_input("Enter your message:")
     if prompt:
-        try:
-            validate_prompt(prompt)
-            if st.session_state.file_content:
-                prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
-            st.session_state.messages.append({"role": "user", "content": prompt})
+        asyncio.run(process_chat_input(prompt, client))
 
-            with st.chat_message("assistant"):
-                response_container = st.empty()
-                full_response = ""
-                try:
-                    for chunk in stream_llm_response(client, st.session_state.model_params, st.session_state.messages):
-                        full_response += chunk
-                        response_container.markdown(full_response + "▌")
-
-                    translated_response = translate_text(full_response, st.session_state.language)
-                    response_container.markdown(translated_response)
-                    st.session_state.messages.append({"role": "assistant", "content": translated_response})
-                    update_token_count(len(full_response.split()))
-
-                    if st.session_state.enable_audio:
-                        text_to_speech(translated_response, st.session_state.language)
-                        st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
-
-                except Exception as e:
-                    st.error(f"An unexpected error occurred: {str(e)}")
-        except ValueError as e:
-            st.error(str(e))
-
-    # Scroll to the bottom of the chat
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
 
+async def process_chat_input(prompt: str, client: groq.Groq):
+    """Processes chat input and gets a response."""
+    try:
+        validate_prompt(prompt)
+
+        if st.session_state.file_content:
+            prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
+
+        messages = [
+            {"role": "system", "content": PERSONAS[st.session_state.persona]},
+            *st.session_state.messages,
+            {"role": "user", "content": prompt},
+        ]
+
+        full_response = ""
+        message_placeholder = st.empty()
+        async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
+            full_response += chunk
+            message_placeholder.markdown(full_response + "▌")
+
+        message_placeholder.markdown(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+        if st.session_state.enable_audio and full_response.strip():
+            text_to_speech(full_response, st.session_state.language)
+            st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
+
+        update_token_count(len(full_response.split()))
+    except Exception as e:
+        st.error(f"Error processing chat input: {str(e)}")
 
 if __name__ == "__main__":
+    if not API_KEY:
+        st.error("GROQ_API_KEY is not set. Please check your .env file.")
+        st.stop()
     main()
