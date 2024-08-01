@@ -19,7 +19,7 @@ from streamlit_ace import st_ace
 import streamlit as st
 import html
 import json
-from persona import PERSONAS  
+from persona import PERSONAS 
 
 load_dotenv()
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -81,6 +81,7 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
         yield f"Error in API call: {str(e)}"
+
 def validate_prompt(prompt: str):
     """Validates the user prompt."""
     if not prompt.strip():
@@ -206,6 +207,7 @@ def initialize_session_state():
         "language": "English",
         "show_analysis": False,
         "content_creation_mode": False,
+        "content_type": "Story", # Default content type
         "show_summarization": False,
         "summarization_type": "Main Takeaways",
         "code_editor_content": "",
@@ -330,16 +332,7 @@ def main():
         with st.expander("Content Creation"):
             st.session_state.content_creation_mode = st.checkbox("Enable Content Creation Mode", value=False)
             if st.session_state.content_creation_mode:
-                content_prompt = st.text_area("Enter your creative prompt:")
-                content_type = st.selectbox("Select Content Type:", ["Story", "Poem", "Article"])
-                if st.button("Generate Content") and content_prompt:
-                    with st.spinner("Generating..."):
-                        generated_content = asyncio.run(create_content(content_prompt, content_type))
-                        st.write("## Generated Content:")
-                        st.write(generated_content)
-                elif st.button("Generate Content") and not content_prompt:
-                    st.warning("Please enter a prompt.")
-
+                st.session_state.content_type = st.selectbox("Select Content Type:", ["Story", "Poem", "Article"])
         # Summarization Mode
         with st.expander("Summarization"):
             st.session_state.show_summarization = st.checkbox("Enable Summarization", value=False)
@@ -386,47 +379,60 @@ def main():
         asyncio.run(process_chat_input(prompt, client))
 
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
+
 async def process_chat_input(prompt: str, client: Groq):
-    """Processes chat input and gets a response."""
+    """Processes chat input, generating content or regular chat based on mode."""
     try:
         validate_prompt(prompt)
 
-        if st.session_state.file_content:
-            prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
-
-        # Use custom persona if selected and defined
-        if st.session_state.persona == "Custom" and st.session_state.custom_persona:
-            system_message = st.session_state.custom_persona
+        if st.session_state.content_creation_mode:
+            # Content Creation Mode
+            with st.spinner("Generating..."):
+                generated_content = asyncio.run(
+                    create_content(prompt, st.session_state.content_type)
+                )
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                st.session_state.messages.append({"role": "assistant", "content": generated_content})
         else:
-            system_message = PERSONAS.get(st.session_state.persona, "")
+            # Regular Chat Mode
+            if st.session_state.file_content:
+                prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
 
-        messages = [
-            {"role": "system", "content": system_message},
-            *st.session_state.messages,
-            {"role": "user", "content": prompt},
-        ]
+            # Use custom persona if selected and defined
+            if st.session_state.persona == "Custom" and st.session_state.custom_persona:
+                system_message = st.session_state.custom_persona
+            else:
+                system_message = PERSONAS.get(st.session_state.persona, "")
 
-        full_response = ""
-        message_placeholder = st.empty()
-        async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
-            if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
-                message_placeholder.error(chunk)
+            messages = [
+                {"role": "system", "content": system_message},
+                *st.session_state.messages,
+                {"role": "user", "content": prompt},
+            ]
+
+            full_response = ""
+            message_placeholder = st.empty()
+            async for chunk in async_stream_llm_response(
+                client, st.session_state.model_params, messages
+            ):
+                if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
+                    message_placeholder.error(chunk)
+                    return
+                full_response += chunk
+                message_placeholder.markdown(full_response + "▌")
+
+            if not full_response:
+                message_placeholder.error("No response generated. Please try again.")
                 return
-            full_response += chunk
-            message_placeholder.markdown(full_response + "▌")
 
-        if not full_response:
-            message_placeholder.error("No response generated. Please try again.")
-            return
+            message_placeholder.markdown(full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-        message_placeholder.markdown(full_response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+            if st.session_state.enable_audio and full_response.strip():
+                text_to_speech(full_response, st.session_state.language)
+                st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
 
-        if st.session_state.enable_audio and full_response.strip():
-            text_to_speech(full_response, st.session_state.language)
-            st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
-
-        update_token_count(len(full_response.split()))
+            update_token_count(len(full_response.split()))
     except Exception as e:
         st.error(f"Error processing chat input: {str(e)}")
 
