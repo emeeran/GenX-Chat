@@ -60,21 +60,28 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
                 },
             ) as response:
                 if response.status != 200:
-                    error_data = await response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Unknown error')
-                    logger.error(f"API Error: {response.status} - {error_message}")
-                    yield f"API Error: {response.status} - {error_message}" 
+                    error_text = await response.text()
+                    logger.error(f"API Error: {response.status} - {error_text}")
+                    yield f"API Error: {response.status} - {error_text}"
                     return
 
                 async for line in response.content:
-                    if line.startswith(b"data: "):
-                        chunk = json.loads(line[6:])
-                        if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
-                            yield chunk["choices"][0]["delta"]["content"]
+                    if line.strip():  # Check if the line is not empty
+                        try:
+                            if line.startswith(b"data: "):
+                                json_str = line[6:].decode('utf-8').strip()
+                                if json_str != "[DONE]":
+                                    chunk = json.loads(json_str)
+                                    if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
+                                        yield chunk["choices"][0]["delta"]["content"]
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"JSON decode error: {json_err}. Raw line: {line}")
+                        except Exception as e:
+                            logger.error(f"Error processing line: {e}. Raw line: {line}")
+
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
         yield f"Error in API call: {str(e)}"
-
 def validate_prompt(prompt: str):
     """Validates the user prompt."""
     if not prompt.strip():
@@ -192,7 +199,7 @@ def initialize_session_state():
         "file_content": "",
         "chat_histories": [],
         "persona": "Default",
-        "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 1024, "temperature": 1.0, "top_p": 1.0},
+        "model_params": {"model": "llama-3.1-70b-versatile", "max_tokens": 11024, "temperature": 1.0, "top_p": 1.0},
         "total_tokens": 0,
         "total_cost": 0,
         "enable_audio": False,
@@ -260,8 +267,8 @@ def main():
             st.session_state.model_params["model"] = st.selectbox(
                 "Choose Model:",
                 options=[
-                    "llama-3.1-405b-reasoning",
                     "llama-3.1-70b-versatile",
+                    "llama-3.1-405b-reasoning",
                     "llama-3.1-8b-instant",
                     "llama3-groq-70b-8192-tool-use-preview",
                     "llama3-70b-8192",
@@ -275,9 +282,9 @@ def main():
             max_token_limit = 4096
             if st.session_state.model_params["model"] == "mixtral-8x7b-32768":
                 max_token_limit = 32768
-            elif st.session_state.model_params["model"] == "llama2-70b-4096":
-                max_token_limit = 4096
-            elif st.session_state.model_params["model"] == "gemma-7b-it":
+            elif st.session_state.model_params["model"] == "llama-3.1-70b-versatile-131072":
+                max_token_limit = 131072
+            elif st.session_state.model_params["model"] == "gemma2-9b-it":
                 max_token_limit = 8192  # Assuming based on previous model, adjust if different
 
             st.session_state.model_params["max_tokens"] = st.slider(
@@ -363,7 +370,6 @@ def main():
         asyncio.run(process_chat_input(prompt, client))
 
     st.markdown('<script>window.scrollTo(0,document.body.scrollHeight);</script>', unsafe_allow_html=True)
-
 async def process_chat_input(prompt: str, client: Groq):
     """Processes chat input and gets a response."""
     try:
@@ -381,8 +387,15 @@ async def process_chat_input(prompt: str, client: Groq):
         full_response = ""
         message_placeholder = st.empty()
         async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
+            if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
+                message_placeholder.error(chunk)
+                return
             full_response += chunk
             message_placeholder.markdown(full_response + "▌")
+
+        if not full_response:
+            message_placeholder.error("No response generated. Please try again.")
+            return
 
         message_placeholder.markdown(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response})
