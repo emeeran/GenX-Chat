@@ -8,6 +8,7 @@ from PIL import Image
 import pytesseract
 from deep_translator import GoogleTranslator
 from datetime import datetime
+import json
 from fpdf import FPDF
 from dotenv import load_dotenv
 from groq import Groq
@@ -18,8 +19,9 @@ import aiohttp
 from streamlit_ace import st_ace
 import streamlit as st
 import html
-import json
-from persona import PERSONAS 
+
+
+from persona import PERSONAS
 
 load_dotenv()
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -65,7 +67,7 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
                     return
 
                 async for line in response.content:
-                    if line.strip():  
+                    if line.strip():
                         try:
                             if line.startswith(b"data: "):
                                 json_str = line[6:].decode('utf-8').strip()
@@ -128,36 +130,51 @@ def update_token_count(tokens: int):
     st.session_state.total_cost += tokens * 0.0001  # Assuming a cost per token
 
 def export_chat(format: str):
-    """Exports the chat history."""
-    chat_history = "\n\n".join([f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages])
+    """Exports the chat history in the specified format."""
+    chat_history_text = "\n\n".join([f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages])
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"chat_exports/chat_history_{timestamp}.{format}"
-    os.makedirs("chat_exports", exist_ok=True)
-
-    if format == "md":
+    
+    if format == "json":
+        filename = f"chat_history_{timestamp}.json"
+        data = st.session_state.messages
         with open(filename, "w") as f:
-            f.write(chat_history)
-        st.download_button("Download Markdown", filename, file_name=filename)
+            json.dump(data, f, indent=4)  # Save as JSON
+        return filename, data  # Return filename for download
+
+    elif format == "md":
+        filename = f"chat_history_{timestamp}.md"
+        with open(filename, "w") as f:
+            f.write(chat_history_text)
+        return filename, chat_history_text
+
     elif format == "pdf":
+        filename = f"chat_history_{timestamp}.pdf"
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 10, chat_history)
+        pdf.multi_cell(0, 10, chat_history_text)
         pdf.output(filename)
-        st.download_button("Download PDF", filename, file_name=filename)
+        return filename, None  # Return filename for download
 
 # --- Chat History Management ---
 def save_chat_history():
-    """Saves the chat history."""
+    """Saves the chat history to a JSON file."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    st.session_state.chat_histories.append({"name": f"Chat {timestamp}", "messages": st.session_state.messages.copy()})
+    filename = f"./chat_history/chat_{timestamp}.json"
+    os.makedirs("./chat_history", exist_ok=True)
+    with open(filename, 'w') as f:
+        json.dump(st.session_state.messages, f, indent=4)
 
-def load_chat_history(selected_history: str):
-    """Loads a chat history."""
-    for history in st.session_state.chat_histories:
-        if history["name"] == selected_history:
-            st.session_state.messages = history["messages"].copy()
-            break
+def load_chat_history(filename):
+    """Loads a chat history from a JSON file."""
+    filepath = os.path.join("./chat_history", filename)
+    if os.path.exists(filepath):
+        with open(filepath, 'r') as f:
+            st.session_state.messages = json.load(f)
+
+def get_saved_chat_files():
+    """Gets a list of saved chat files."""
+    return [f for f in os.listdir("./chat_history") if f.endswith(".json")]
 
 # --- Code Analysis (Placeholder) ---
 def analyze_code(code: str) -> List[str]:
@@ -256,10 +273,10 @@ def main():
             with col2:
                 st.button("Save Chat", on_click=save_chat_history)
 
-            chat_history_names = [history["name"] for history in st.session_state.chat_histories]
-            selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
-            if selected_history:
-                load_chat_history(selected_history)
+            saved_chats = get_saved_chat_files()
+            selected_chat = st.selectbox("Load Chat History", options=saved_chats)
+            if selected_chat:
+                load_chat_history(selected_chat)
 
         # Audio Settings
         with st.expander("Audio Settings"):
@@ -325,9 +342,12 @@ def main():
 
         # Export Chat
         with st.expander("Export Chat"):
-            export_format = st.selectbox("Export Format", ["md", "pdf"])
-            st.button("Export Chat", on_click=lambda: export_chat(export_format))
-
+            export_format = st.selectbox("Select Export Format", ["json", "md", "pdf"])
+            filename, data = export_chat(export_format)
+            if data: # For markdown, data is returned directly 
+                st.download_button(f"Export Chat as {export_format.upper()}", data=data, file_name=filename)
+            else: # For JSON and PDF, the file is saved first
+                st.download_button(f"Export Chat as {export_format.upper()}", data=open(filename, 'rb'), file_name=filename)
         # Content Creation Mode
         with st.expander("Content Creation"):
             st.session_state.content_creation_mode = st.checkbox("Enable Content Creation Mode", value=False)
