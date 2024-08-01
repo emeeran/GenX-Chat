@@ -18,10 +18,7 @@ from typing import List, Dict, Any
 import asyncio
 import aiohttp
 from streamlit_ace import st_ace
-import html
 import json
-import asyncio
-from asyncio import AbstractEventLoop
 
 # Load environment variables
 load_dotenv()
@@ -31,23 +28,10 @@ API_KEY = os.getenv("GROQ_API_KEY")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load persona definitions
-PERSONAS = {
-    "Default": "You are a helpful assistant.",
-    "Programmer": "You are a skilled programmer with expertise in multiple languages.",
-    "Creative Writer": "You are a creative writer with a flair for storytelling.",
-    "Data Analyst": "You are a data analyst with expertise in statistics and data visualization.",
-}
+# Import PERSONAS from persona.py
+from persona import PERSONAS
 
-# Set page config
-st.set_page_config(
-    page_title="Enhanced Groq-Chat",
-    page_icon="💬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Initialize session state
+# Session State Initialization
 def initialize_session_state():
     default_values = {
         "messages": [],
@@ -78,10 +62,11 @@ def initialize_session_state():
 
 initialize_session_state()
 
-# Groq client setup
+# Groq Client Setup
 def get_groq_client(api_key: str):
     return groq.Groq(api_key=api_key)
 
+# Asynchronous Functions
 async def async_stream_llm_response(client, params: Dict[str, Any], messages: List[Dict[str, str]]):
     try:
         async with aiohttp.ClientSession() as session:
@@ -108,30 +93,6 @@ async def async_stream_llm_response(client, params: Dict[str, Any], messages: Li
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
         yield "I'm sorry, but I encountered an error while processing your request."
-
-def validate_prompt(prompt: str):
-    if not prompt.strip():
-        raise ValueError("Prompt cannot be empty")
-
-def analyze_code(code: str) -> List[Dict[str, Any]]:
-    try:
-        tree = ast.parse(code)
-        analysis_results = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                function_name = node.name
-                docstring = ast.get_docstring(node)
-                arguments = [arg.arg for arg in node.args.args]
-                analysis_results.append(
-                    {
-                        "Function": function_name,
-                        "Docstring": docstring,
-                        "Arguments": arguments,
-                    }
-                )
-        return analysis_results
-    except SyntaxError as e:
-        return [{"Error": f"Syntax Error: {e.msg}"}]
 
 async def summarize_text(text: str, summarization_type: str = "Main Takeaways") -> str:
     prompt_templates = {
@@ -171,6 +132,31 @@ async def create_content(prompt: str, content_type: str = "Story") -> str:
         top_p=0.9,
     )
     return response.choices[0].message.content
+
+# Utility Functions
+def validate_prompt(prompt: str):
+    if not prompt.strip():
+        raise ValueError("Prompt cannot be empty")
+
+def analyze_code(code: str) -> List[Dict[str, Any]]:
+    try:
+        tree = ast.parse(code)
+        analysis_results = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                function_name = node.name
+                docstring = ast.get_docstring(node)
+                arguments = [arg.arg for arg in node.args.args]
+                analysis_results.append(
+                    {
+                        "Function": function_name,
+                        "Docstring": docstring,
+                        "Arguments": arguments,
+                    }
+                )
+        return analysis_results
+    except SyntaxError as e:
+        return [{"Error": f"Syntax Error: {e.msg}"}]
 
 def export_chat(format: str):
     chat_history = "\n\n".join(
@@ -234,6 +220,10 @@ def update_token_count(tokens: int):
     st.session_state.total_cost += tokens * 0.0001
 
 def text_to_speech(text: str, lang: str):
+    if not text.strip():
+        st.warning("No text to speak")
+        return
+    
     lang_map = {"english": "en", "tamil": "ta", "hindi": "hi"}
     lang_code = lang_map.get(lang.lower(), "en")
     tts = gTTS(text=text, lang=lang_code)
@@ -262,6 +252,7 @@ def translate_text(text: str, target_lang: str) -> str:
     translator = GoogleTranslator(source="auto", target=target_lang)
     return translator.translate(text)
 
+# Chat Input Processing
 async def process_chat_input(prompt: str):
     if st.session_state.model_params["model"] == "whisper-large-v3":
         st.error("Whisper model is for speech recognition only. Please select a different model for text chat.")
@@ -273,34 +264,35 @@ async def process_chat_input(prompt: str):
         if st.session_state.file_content:
             prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
 
+        # Include persona in messages
         messages = [
             {"role": "system", "content": PERSONAS[st.session_state.persona]},
             *st.session_state.messages,
             {"role": "user", "content": prompt},
         ]
 
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            async for chunk in async_stream_llm_response(
-                get_groq_client(API_KEY),
-                st.session_state.model_params,
-                messages,
-            ):
-                full_response += chunk
-                message_placeholder.markdown(full_response + "▌")
-            message_placeholder.markdown(full_response)
+        full_response = ""
+        message_placeholder = st.chat_message("assistant")
+        async for chunk in async_stream_llm_response(
+            get_groq_client(API_KEY),
+            st.session_state.model_params,
+            messages,
+        ):
+            full_response += chunk
+            message_placeholder.markdown(full_response + "▌")
 
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        message_placeholder.markdown(full_response)
+
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-        if st.session_state.enable_audio:
+        if st.session_state.enable_audio and full_response.strip():
             text_to_speech(full_response, st.session_state.language)
 
         update_token_count(len(full_response.split()))
     except ValueError as e:
         st.error(str(e))
 
+# Streamlit UI
 def main():
     st.markdown(
         """<h1 style="text-align: center; color: #6ca395;">Enhanced Groq-Chat 💬</h1>""",
@@ -332,8 +324,13 @@ def main():
         # Persona Settings
         with st.expander("Persona Settings"):
             persona_options = list(PERSONAS.keys())
-            st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
-            st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
+            st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index(st.session_state.persona))
+            
+            # Custom Persona Input
+            if st.session_state.persona == "Custom":
+                st.text_area("Custom Persona Description:", key="custom_persona_input")
+            else:
+                st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
 
         # Model Settings
         with st.expander("Model Settings"):
@@ -350,28 +347,27 @@ def main():
                     "whisper-large-v3"
                 ],
             )
-            
+
             # Adjust max tokens based on model
             if st.session_state.model_params["model"] in ["llama3-groq-70b-8192-tool-use-preview", "llama3-70b-8192"]:
                 max_token_limit = 8192
             elif st.session_state.model_params["model"] == "mixtral-8x7b-32768":
                 max_token_limit = 32768
             else:
-                max_token_limit = 4096  # Default for other models
-            
+                max_token_limit = 4096 
+
             st.session_state.model_params["max_tokens"] = st.slider("Max Tokens:", min_value=1, max_value=max_token_limit, value=min(1024, max_token_limit), step=1)
-            
+
             # Only show temperature and top_p for non-whisper models
             if st.session_state.model_params["model"] != "whisper-large-v3":
                 st.session_state.model_params["temperature"] = st.slider("Temperature:", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
                 st.session_state.model_params["top_p"] = st.slider("Top-p:", min_value=0.0, max_value=1.0, value=0.9, step=0.1)
-            
+
             # Special handling for whisper model
             if st.session_state.model_params["model"] == "whisper-large-v3":
                 st.warning("Whisper model is designed for speech recognition. Please upload an audio file for transcription.")
                 audio_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a"])
                 if audio_file is not None:
-                    # Here you would implement the logic to transcribe the audio file using the whisper model
                     st.info("Audio transcription feature is not yet implemented.")
 
         # File Upload and Code Analysis
@@ -441,26 +437,21 @@ def main():
                 try:
                     exec(st.session_state.code_editor_content)
                 except Exception as e:
-                    st.error(f"Error executing code: {str(e)}")
+                    st.error(f"Error executing code: {e}")
 
-    # Main Chat Interface
-    chat_container = st.container()
-    with chat_container:
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    # Prompt Input at the Bottom
     prompt = st.chat_input("Enter your message:")
     if prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
         asyncio.run(process_chat_input(prompt))
 
-    # Audio Output
     if st.session_state.audio_base64:
         audio_bytes = base64.b64decode(st.session_state.audio_base64)
         st.audio(audio_bytes, format="audio/mp3")
 
-    # Statistics
     st.sidebar.markdown("### Statistics")
     st.sidebar.write(f"Total Tokens Used: {st.session_state.total_tokens}")
     st.sidebar.write(f"Total Cost (USD): ${st.session_state.total_cost:.4f}")
