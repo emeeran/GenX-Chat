@@ -19,9 +19,8 @@ from streamlit_ace import st_ace
 import streamlit as st
 import html
 import json
-from persona import PERSONAS  # Assuming you have a persona.py file
+from persona import PERSONAS  
 
-# --- Global Settings and Constants ---
 load_dotenv()
 API_KEY = os.getenv("GROQ_API_KEY")
 if API_KEY is None:
@@ -66,7 +65,7 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
                     return
 
                 async for line in response.content:
-                    if line.strip():  # Check if the line is not empty
+                    if line.strip():  
                         try:
                             if line.startswith(b"data: "):
                                 json_str = line[6:].decode('utf-8').strip()
@@ -224,25 +223,30 @@ def main():
         return
 
     st.set_page_config(
-        page_title="Enhanced Groq-Chat",
+        page_title="GenX Chat",
         page_icon="💬",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
-    st.markdown('<h1 style="text-align: center; color: #6ca395;">Enhanced Groq-Chat 💬</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX Chat 💬</h1>', unsafe_allow_html=True)
 
     # --- Sidebar ---
     with st.sidebar:
+        
+        st.markdown('<h1 style="text-align: center; color: #6ca395;"> Welcome to GenX Chat!</h1>', unsafe_allow_html=True)
+        st.write("GenX Chat is a fast multimodal chat app that uses the Groq API to generate responses to your prompts. You can chat with the AI, upload files, generate content, summarize text, and more!")
+        
+        
         st.title("🔧 Settings")
 
         # Chat Settings
         with st.expander("Chat Settings"):
             col1, col2 = st.columns(2)
             with col1:
-                st.button("Reset", on_click=lambda: st.session_state.clear())
+                st.button("Reset All", on_click=lambda: st.session_state.clear())
             with col2:
-                st.button("Save", on_click=save_chat_history)
+                st.button("Save Chat", on_click=save_chat_history)
 
             chat_history_names = [history["name"] for history in st.session_state.chat_histories]
             selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
@@ -355,11 +359,11 @@ def main():
                 except Exception as e:
                     st.error(f"Error executing code: {str(e)}")
                     
-        st.markdown('<h3 style="text-align: center; color: #6ca395;">📄 Created & Maintained by:</h3>', unsafe_allow_html=True)
-        st.markdown('<h2 style="text-align: center; color: #6ca395;">Meeran E Mandhini</h2>', unsafe_allow_html=True)
+                    
+        st.markdown("Created & Maintained: <b> Meeran E Mandhini <b> emeeranjp@gmail.com", unsafe_allow_html=True)            
+        
 
-
-    # --- Main Chat Interface ---
+# --- Main Chat Interface ---
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.messages:
