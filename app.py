@@ -372,12 +372,12 @@ async def process_chat_input(prompt: str, client: Groq):
             
             message_placeholder.markdown(full_response)
 
-        if not full_response:
-            message_placeholder.error("No response generated. Please try again.")
-            return
+        # if not full_response:
+        #     message_placeholder.error("No response generated. Please try again.")
+        #     return
 
-        with st.chat_message("assistant"):
-            message_placeholder.markdown(full_response)
+        # with st.chat_message("assistant"):
+        #     message_placeholder.markdown(full_response)
         
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": full_response})
