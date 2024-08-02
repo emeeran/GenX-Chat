@@ -31,7 +31,7 @@ if API_KEY is None:
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-MAX_CHAT_HISTORY_LENGTH = 10
+MAX_CHAT_HISTORY_LENGTH = 50
 
 # --- Utility Functions ---
 def get_groq_client(api_key: str) -> Groq:
@@ -223,23 +223,37 @@ def main():
         page_title="GenX-Chat",
         page_icon="💬",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed"
     )
+
+    st.markdown("""
+    <style>
+    .stApp {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .stChatMessage {
+        max-width: 80%;
+    }
+    @media (max-width: 768px) {
+        .stChatMessage {
+            max-width: 90%;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
 
     # --- Sidebar ---
     with st.sidebar:
-        # 
-        st.title("🔧 Settings")
-
         # Chat Settings 
         with st.expander("Chat Settings", expanded=True):
             col1, col2 = st.columns(2)
             with col1:
                 st.button("Reset All", on_click=lambda: st.session_state.clear())
             with col2:
-                st.button("Save Chat", on_click=save_chat_history)
+                st.button("Save Chat History", on_click=save_chat_history)
 
             chat_history_names = [history["name"] for history in st.session_state.chat_histories]
             selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
@@ -262,7 +276,6 @@ def main():
                 ],
             )
 
-            # Adjust max tokens based on model
             max_token_limit = 4096
             if st.session_state.model_params["model"] == "mixtral-8x7b-32768":
                 max_token_limit = 32768
@@ -321,7 +334,7 @@ def main():
     # --- Main Chat Interface ---
     chat_container = st.container()
     with chat_container:
-        for message in st.session_state.messages:
+        for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
@@ -340,7 +353,7 @@ async def process_chat_input(prompt: str, client: Groq):
 
         messages = [
             {"role": "system", "content": PERSONAS[st.session_state.persona]},
-            *st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:],  # Limit chat history to 10
+            *st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:],
             {"role": "user", "content": prompt},
         ]
 
@@ -348,15 +361,16 @@ async def process_chat_input(prompt: str, client: Groq):
             st.markdown(prompt)
 
         full_response = ""
-        message_placeholder = st.empty()
-        
-        async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
-            if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
-                message_placeholder.error(chunk)
-                return
-            full_response += chunk
-            with st.chat_message("assistant"):
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
+                if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
+                    message_placeholder.error(chunk)
+                    return
+                full_response += chunk
                 message_placeholder.markdown(full_response + "▌")
+            
+            message_placeholder.markdown(full_response)
 
         if not full_response:
             message_placeholder.error("No response generated. Please try again.")
@@ -388,8 +402,11 @@ async def process_chat_input(prompt: str, client: Groq):
             with st.chat_message("assistant"):
                 st.markdown(f"## Summary ({st.session_state.summarization_type}):\n\n{summary}")
 
+    except ValueError as ve:
+        st.error(f"Invalid input: {str(ve)}")
     except Exception as e:
-        st.error(f"Error processing chat input: {str(e)}")
+        st.error(f"An unexpected error occurred: {str(e)}")
+        logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     if not API_KEY:
