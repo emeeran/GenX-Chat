@@ -220,18 +220,17 @@ def main():
         return
 
     st.set_page_config(
-        page_title="Enhanced Groq-Chat",
+        page_title="GenX-Chat",
         page_icon="💬",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
-    st.markdown('<h1 style="text-align: center; color: #6ca395;">Enhanced Groq-Chat 💬</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
 
     # --- Sidebar ---
     with st.sidebar:
-        st.markdown('<h2 style="text-align: center; color: #6ca395;">📄 Created & Maintained by:</h2>', unsafe_allow_html=True)
-        st.markdown('<h3 style="text-align: center; color: #6ca395;">Meeran E Mandhini</h3>', unsafe_allow_html=True)
+        # 
         st.title("🔧 Settings")
 
         # Chat Settings 
@@ -240,7 +239,7 @@ def main():
             with col1:
                 st.button("Reset All", on_click=lambda: st.session_state.clear())
             with col2:
-                st.button("Save Chat History", on_click=save_chat_history)
+                st.button("Save Chat", on_click=save_chat_history)
 
             chat_history_names = [history["name"] for history in st.session_state.chat_histories]
             selected_history = st.selectbox("Load Chat History", options=[""] + chat_history_names)
@@ -397,4 +396,3 @@ if __name__ == "__main__":
         st.error("GROQ_API_KEY is not set. Please check your .env file.")
         st.stop()
     main()
-        
