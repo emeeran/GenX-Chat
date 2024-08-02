@@ -31,6 +31,8 @@ if API_KEY is None:
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
+MAX_CHAT_HISTORY_LENGTH = 50
+
 # --- Utility Functions ---
 def get_groq_client(api_key: str) -> Groq:
     """Returns a Groq client instance."""
@@ -67,6 +69,7 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
 
                 async for line in response.content:
                     if line.strip():
+                    if line.strip():
                         try:
                             if line.startswith(b"data: "):
                                 json_str = line[6:].decode('utf-8').strip()
@@ -83,6 +86,7 @@ async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messag
         logger.error(f"Error in API call: {str(e)}")
         yield f"Error in API call: {str(e)}"
 
+
 def validate_prompt(prompt: str):
     """Validates the user prompt."""
     if not prompt.strip():
@@ -97,7 +101,6 @@ def process_uploaded_file(uploaded_file):
         "text/markdown": lambda f: f.getvalue().decode("utf-8"),
         "image/jpeg": lambda f: pytesseract.image_to_string(Image.open(f)),
         "image/png": lambda f: pytesseract.image_to_string(Image.open(f)),
-        "text/x-python": lambda f: f.getvalue().decode("utf-8"),
     }
     for file_type, handler in file_handlers.items():
         if uploaded_file.type.startswith(file_type):
