@@ -426,18 +426,20 @@ async def main():
 
         # Chat Settings
         with st.expander("Chat Settings", expanded=True):
-            chat_name = st.text_input("Chat Name:", value="New Chat")
-            col1, col2, col3 = st.columns(3)
+            saved_chats = await get_saved_chat_names()
+            selected_chat = st.selectbox("Load Chat History", options=[""] + saved_chats)
+            if selected_chat:
+                await load_chat_history_from_db(selected_chat)
+
+            col1, col2 = st.columns(2)
             with col1:
-                save_button = st.button("Save Chat", on_click=lambda: asyncio.create_task(save_chat_history_to_db(chat_name)))
+                if st.button("Save Chat"):
+                    chat_name = st.text_input("Enter a name for this chat:")
+                    if chat_name:
+                        asyncio.create_task(save_chat_history_to_db(chat_name))
             with col2:
                 reset_button = st.button("Reset Chat", on_click=reset_current_chat)
-            with col3:
-                saved_chats = await get_saved_chat_names()
-                selected_chat = st.selectbox("Load Chat History", options=[""] + saved_chats)
-                if selected_chat:
-                    await load_chat_history_from_db(selected_chat)
-
+        
         # Model Settings
         with st.expander("Model"):
             if st.session_state.provider == "Groq":
@@ -508,12 +510,16 @@ async def main():
                 st.session_state.voice = st.selectbox("Select Voice (OpenAI):", VOICE_OPTIONS["OpenAI"])
             else:
                 st.session_state.voice = st.selectbox("Select Language Code (gTTS):", VOICE_OPTIONS["gTTS"])
-
-        # Content Generation
-        with st.expander("Content Generation"):
-            st.session_state.content_creation_mode = st.checkbox("Enable Content Creation Mode", value=False)
-            if st.session_state.content_creation_mode:
-                st.session_state.content_type = st.selectbox("Select Content Type:", list(CONTENT_TYPES.keys()))
+        
+        # File Upload (moved above Summarization)
+        with st.expander("File Upload"):
+            uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"])
+            if uploaded_file:
+                try:
+                    st.session_state.file_content = process_uploaded_file(uploaded_file)
+                    st.success("File processed successfully")
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
 
         # Summarization
         with st.expander("Summarize"):
@@ -528,16 +534,6 @@ async def main():
         with st.expander("Export"):
             export_format = st.selectbox("Export Format", ["md", "pdf"])
             st.button("Export Chat", on_click=lambda: export_chat(export_format))
-
-        # File Upload
-        with st.expander("File Upload"):
-            uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"])
-            if uploaded_file:
-                try:
-                    st.session_state.file_content = process_uploaded_file(uploaded_file)
-                    st.success("File processed successfully")
-                except Exception as e:
-                    st.error(f"Error processing file: {e}")
 
     # --- Main Chat Interface ---
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
