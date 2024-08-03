@@ -15,22 +15,40 @@ import streamlit as st
 import json
 from PIL import Image
 from typing import List, Dict, Any
-from content_type import CONTENT_TYPES
-from persona import PERSONAS
 from groq import Groq
-
+import openai
 
 # --- Global Settings and Constants ---
 load_dotenv()
-API_KEY = os.getenv("GROQ_API_KEY")
-if API_KEY is None:
-    st.error("GROQ_API_KEY environment variable not set. Please set it in your .env file.")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not GROQ_API_KEY and not OPENAI_API_KEY:
+    st.error("Neither GROQ_API_KEY nor OPENAI_API_KEY environment variable is set. Please set at least one in your .env file.")
     st.stop()
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 MAX_CHAT_HISTORY_LENGTH = 50
+
+# --- Content Types and Personas ---
+CONTENT_TYPES = {
+    "Short Story": "short story",
+    "Blog Post": "blog post",
+    "Essay": "essay",
+    "News Article": "news article",
+    "Social Media Post": "social media post",
+    "Product Description": "product description",
+}
+
+PERSONAS = {
+    "Default": "You are a helpful assistant.",
+    "Professional": "You are a professional assistant focused on providing accurate and concise information.",
+    "Creative": "You are a creative assistant, encouraging imaginative and innovative ideas.",
+    "Academic": "You are an academic assistant, providing scholarly and well-researched responses.",
+    "Friendly": "You are a friendly and casual assistant, engaging in relaxed conversation.",
+}
 
 # --- Utility Functions ---
 def get_groq_client(api_key: str):
@@ -41,48 +59,69 @@ def get_groq_client(api_key: str):
         logger.error(f"Failed to initialize Groq client: {str(e)}")
         return None
 
-async def async_stream_llm_response(client: Groq, params: Dict[str, Any], messages: List[Dict[str, str]]):
-    """Streams the LLM response from the Groq API."""
+def get_openai_client(api_key: str):
+    """Returns an OpenAI client instance."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": params["model"],
-                    "messages": messages,
-                    "max_tokens": params.get("max_tokens"),
-                    "temperature": params.get("temperature"),
-                    "top_p": params.get("top_p"),
-                    "stream": True,
-                },
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"API Error: {response.status} - {error_text}")
-                    yield f"API Error: {response.status} - {error_text}"
-                    return
+        return openai.AsyncOpenAI(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+        return None
 
-                async for line in response.content:
-                    if line.strip() and line.startswith(b"data: "):
-                        try:
-                            json_str = line[6:].decode('utf-8').strip()
-                            if json_str != "[DONE]":
-                                chunk = json.loads(json_str)
-                                if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
-                                    yield chunk["choices"][0]["delta"]["content"]
-                        except json.JSONDecodeError as json_err:
-                            logger.error(f"JSON decode error: {json_err}. Raw line: {line}")
-                        except Exception as e:
-                            logger.error(f"Error processing line: {e}. Raw line: {line}")
+async def async_stream_llm_response(client, params: Dict[str, Any], messages: List[Dict[str, str]], provider: str):
+    """Streams the LLM response from the selected API."""
+    try:
+        if provider == "Groq":
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": params["model"],
+                        "messages": messages,
+                        "max_tokens": params.get("max_tokens"),
+                        "temperature": params.get("temperature"),
+                        "top_p": params.get("top_p"),
+                        "stream": True,
+                    },
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"API Error: {response.status} - {error_text}")
+                        yield f"API Error: {response.status} - {error_text}"
+                        return
+
+                    async for line in response.content:
+                        if line.strip() and line.startswith(b"data: "):
+                            try:
+                                json_str = line[6:].decode('utf-8').strip()
+                                if json_str != "[DONE]":
+                                    chunk = json.loads(json_str)
+                                    if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
+                                        yield chunk["choices"][0]["delta"]["content"]
+                            except json.JSONDecodeError as json_err:
+                                logger.error(f"JSON decode error: {json_err}. Raw line: {line}")
+                            except Exception as e:
+                                logger.error(f"Error processing line: {e}. Raw line: {line}")
+        elif provider == "OpenAI":
+            response = await client.chat.completions.create(
+                model=params["model"],
+                messages=messages,
+                max_tokens=params.get("max_tokens"),
+                temperature=params.get("temperature"),
+                top_p=params.get("top_p"),
+                stream=True,
+            )
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
 
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
         yield f"Error in API call: {str(e)}"
-
+        
 def validate_prompt(prompt: str):
     """Validates the user prompt."""
     if not prompt.strip():
@@ -165,9 +204,10 @@ async def create_content(prompt: str, content_type: str) -> str:
     full_prompt = f"Write a {content_type} based on this prompt: {prompt}"
     generated_content = ""
     async for chunk in async_stream_llm_response(
-        get_groq_client(API_KEY),
+        get_groq_client(GROQ_API_KEY) if st.session_state.provider == "Groq" else get_openai_client(OPENAI_API_KEY),
         st.session_state.model_params,
         [{"role": "user", "content": full_prompt}],
+        st.session_state.provider
     ):
         generated_content += chunk
     return generated_content
@@ -178,9 +218,10 @@ async def summarize_text(text: str, summary_type: str) -> str:
     full_prompt = f"Please provide a {summary_type} of the following text: {text}"
     summary = ""
     async for chunk in async_stream_llm_response(
-        get_groq_client(API_KEY),
+        get_groq_client(GROQ_API_KEY) if st.session_state.provider == "Groq" else get_openai_client(OPENAI_API_KEY),
         st.session_state.model_params,
         [{"role": "user", "content": full_prompt}],
+        st.session_state.provider
     ):
         summary += chunk
     return summary
@@ -203,6 +244,7 @@ def initialize_session_state():
         "show_summarization": False,
         "summarization_type": "Main Takeaways",
         "content_type": "Short Story",
+        "provider": "Groq",  # Default provider
     }
     for key, value in default_values.items():
         if key not in st.session_state:
@@ -212,9 +254,14 @@ def initialize_session_state():
 def main():
     """Main Streamlit app function."""
     initialize_session_state()
-    client = get_groq_client(API_KEY)
+    
+    if st.session_state.provider == "Groq":
+        client = get_groq_client(GROQ_API_KEY)
+    else:
+        client = get_openai_client(OPENAI_API_KEY)
+    
     if client is None:
-        st.error("Failed to initialize Groq client. Please check your API key and try again.")
+        st.error(f"Failed to initialize {st.session_state.provider} client. Please check your API key and try again.")
         return
 
     st.set_page_config(
@@ -223,7 +270,6 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
     
     st.markdown("""
         <style>
@@ -254,13 +300,12 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-
-
-    # st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
-
-        # --- Sidebar ---
+    # --- Sidebar ---
     with st.sidebar:
         st.markdown("<h3 style='text-align: center;'>GenX-Chat Settings</h3>", unsafe_allow_html=True)
+        
+        # Provider Selection
+        st.session_state.provider = st.selectbox("Select Provider", ["Groq", "OpenAI"])
         
         # Chat Settings 
         with st.expander("Chat Settings", expanded=True):
@@ -275,23 +320,31 @@ def main():
             if selected_history:
                 load_chat_history(selected_history)
 
-
-
         # Model Settings
         with st.expander("Model"):
-            st.session_state.model_params["model"] = st.selectbox(
-                "Choose Model:",
-                options=[
-                    "llama-3.1-70b-versatile",
-                    "llama-3.1-405b-reasoning",
-                    "llama-3.1-8b-instant",
-                    "llama3-groq-70b-8192-tool-use-preview",
-                    "llama3-70b-8192",
-                    "mixtral-8x7b-32768",
-                    "gemma2-9b-it",
-                    "whisper-large-v3"
-                ],
-            )
+            if st.session_state.provider == "Groq":
+                st.session_state.model_params["model"] = st.selectbox(
+                    "Choose Model:",
+                    options=[
+                        "llama-3.1-70b-versatile",
+                        "llama-3.1-405b-reasoning",
+                        "llama-3.1-8b-instant",
+                        "llama3-groq-70b-8192-tool-use-preview",
+                        "llama3-70b-8192",
+                        "mixtral-8x7b-32768",
+                        "gemma2-9b-it",
+                        "whisper-large-v3"
+                    ],
+                )
+            else:
+                st.session_state.model_params["model"] = st.selectbox(
+                    "Choose Model:",
+                    options=[
+                        "gpt-4o-mini",
+                        "gpt-4o",
+                        "gpt-3.5-turbo",
+                    ],
+                )
 
             max_token_limit = 4096
             if st.session_state.model_params["model"] == "mixtral-8x7b-32768":
@@ -363,8 +416,7 @@ def main():
     if prompt:
         asyncio.run(process_chat_input(prompt, client))
 
-
-async def process_chat_input(prompt: str, client: Groq):
+async def process_chat_input(prompt: str, client):
     """Processes chat input, gets a response, and manages chat history."""
     try:
         validate_prompt(prompt)
@@ -384,7 +436,7 @@ async def process_chat_input(prompt: str, client: Groq):
         full_response = ""
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
-            async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages):
+            async for chunk in async_stream_llm_response(client, st.session_state.model_params, messages, st.session_state.provider):
                 if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
                     message_placeholder.error(chunk)
                     return
@@ -423,7 +475,7 @@ async def process_chat_input(prompt: str, client: Groq):
         logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
-    if not API_KEY:
-        st.error("GROQ_API_KEY is not set. Please check your .env file.")
+    if not GROQ_API_KEY and not OPENAI_API_KEY:
+        st.error("Neither GROQ_API_KEY nor OPENAI_API_KEY is set. Please check your .env file.")
         st.stop()
     main()
