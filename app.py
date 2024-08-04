@@ -38,14 +38,7 @@ DB_PATH = "chat_history.db"
 
 # --- Voice Options ---
 VOICE_OPTIONS = {
-    "OpenAI": [
-        "alloy",
-        "echo",
-        "fable",
-        "onyx",
-        "nova",
-        "shimmer",
-    ],
+    "OpenAI": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
     "gTTS": ["en", "ta", "hi"],
 }
 
@@ -118,7 +111,6 @@ GEMINI_FUNCTIONS = [
     },
 ]
 
-
 # --- Utility Functions ---
 @lru_cache(maxsize=None)
 def get_api_client(provider: str):
@@ -136,7 +128,6 @@ def get_api_client(provider: str):
         logger.error(f"Failed to initialize {provider} client: {str(e)}")
         return None
 
-
 async def create_database():
     """Creates the chat history database if it doesn't exist."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -152,7 +143,6 @@ async def create_database():
             """
         )
         await db.commit()
-
 
 async def async_stream_llm_response(
     client,
@@ -182,9 +172,7 @@ async def async_stream_llm_response(
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(
-                            f"Groq API Error: {response.status} - {error_text}"
-                        )
+                        logger.error(f"Groq API Error: {response.status} - {error_text}")
                         yield f"Groq API Error: {response.status} - {error_text}"
                         return
 
@@ -202,13 +190,9 @@ async def async_stream_llm_response(
                                     ):
                                         yield chunk["choices"][0]["delta"]["content"]
                             except json.JSONDecodeError as json_err:
-                                logger.error(
-                                    f"JSON decode error: {json_err}. Raw line: {line}"
-                                )
+                                logger.error(f"JSON decode error: {json_err}. Raw line: {line}")
                             except Exception as e:
-                                logger.error(
-                                    f"Error processing line: {e}. Raw line: {line}"
-                                )
+                                logger.error(f"Error processing line: {e}. Raw line: {line}")
         elif provider == "OpenAI":
             if st.session_state.language != "English":
                 assistant_response = translate_text(
@@ -260,9 +244,7 @@ async def async_stream_llm_response(
                             if "function_call" in candidate:
                                 function_call = candidate["function_call"]
                                 function_name = function_call["name"]
-                                function_args = json.loads(
-                                    function_call.get("arguments", "{}")
-                                )
+                                function_args = json.loads(function_call.get("arguments", "{}"))
                                 yield f"Function Call: {function_name}\nArguments: {function_args}"
                             else:
                                 yield candidate["output"]
@@ -271,21 +253,17 @@ async def async_stream_llm_response(
                             yield f"Error in Google API response: {data}"
                     else:
                         error_text = await response.text()
-                        logger.error(
-                            f"Google API Error: {response.status} - {error_text}"
-                        )
+                        logger.error(f"Google API Error: {response.status} - {error_text}")
                         yield f"Google API Error: {response.status} - {error_text}"
 
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
         yield f"Error in API call: {str(e)}"
 
-
 def validate_prompt(prompt: str):
     """Validates the user prompt to ensure it's not empty."""
     if not prompt.strip():
         raise ValueError("Prompt cannot be empty")
-
 
 def process_uploaded_file(uploaded_file):
     """Processes the uploaded file based on its type."""
@@ -306,7 +284,6 @@ def process_uploaded_file(uploaded_file):
             return handler(uploaded_file)
     raise ValueError("Unsupported file type")
 
-
 def text_to_speech(text: str, lang: str):
     """Converts text to speech using gTTS."""
     lang_map = {"English": "en", "Tamil": "ta", "Hindi": "hi"}
@@ -319,7 +296,6 @@ def text_to_speech(text: str, lang: str):
     os.remove(audio_file)
     st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
 
-
 def translate_text(text: str, target_lang: str) -> str:
     """Translates text to the target language."""
     if target_lang == "English":
@@ -327,22 +303,15 @@ def translate_text(text: str, target_lang: str) -> str:
     translator = GoogleTranslator(source="auto", target=target_lang)
     return translator.translate(text)
 
-
 def update_token_count(tokens: int):
     """Updates the token count and estimated cost in the session state."""
     st.session_state.total_tokens += tokens
-    st.session_state.total_cost += (
-        tokens * 0.0001
-    )  # Assuming a cost of $0.0001 per token
-
+    st.session_state.total_cost += tokens * 0.0001  # Assuming a cost of $0.0001 per token
 
 def export_chat(format: str):
     """Exports the chat history in the chosen format."""
     chat_history = "\n\n".join(
-        [
-            f"**{m['role'].capitalize()}:** {m['content']}"
-            for m in st.session_state.messages
-        ]
+        [f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages]
     )
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"chat_exports/chat_history_{timestamp}.{format}"
@@ -360,7 +329,6 @@ def export_chat(format: str):
         pdf.output(filename)
         st.download_button("Download PDF", filename, file_name=filename)
 
-
 # --- Chat History Management ---
 async def save_chat_history_to_db(chat_name: str):
     """Saves the current chat history to the database."""
@@ -374,7 +342,6 @@ async def save_chat_history_to_db(chat_name: str):
         )
         await db.commit()
 
-
 async def load_chat_history_from_db(chat_name: str):
     """Loads chat history from the database."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -385,7 +352,6 @@ async def load_chat_history_from_db(chat_name: str):
             messages = [{"role": row[0], "content": row[1]} async for row in cursor]
     st.session_state.messages = messages
 
-
 async def get_saved_chat_names():
     """Retrieves saved chat names from the database."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -393,13 +359,11 @@ async def get_saved_chat_names():
             chat_names = [row[0] async for row in cursor]
     return chat_names
 
-
 async def delete_chat(chat_name):
     """Deletes a chat by its name from the database."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM chat_history WHERE chat_name = ?", (chat_name,))
         await db.commit()
-
 
 # --- Content Creation (Uses LLM) ---
 async def create_content(prompt: str, content_type: str) -> str:
@@ -416,7 +380,6 @@ async def create_content(prompt: str, content_type: str) -> str:
         generated_content += chunk
     return generated_content
 
-
 # --- Summarization (Uses LLM) ---
 async def summarize_text(text: str, summary_type: str) -> str:
     """Uses the LLM to summarize the given text."""
@@ -431,7 +394,6 @@ async def summarize_text(text: str, summary_type: str) -> str:
     ):
         summary += chunk
     return summary
-
 
 # --- Helper Functions ---
 def get_model_options(provider):
@@ -462,7 +424,6 @@ def get_model_options(provider):
         ]
     return []
 
-
 def get_max_token_limit(model):
     """Returns the maximum token limit for the specified model."""
     if "mixtral-8x7b-32768" in model:
@@ -473,11 +434,9 @@ def get_max_token_limit(model):
         return 8192
     return 4096
 
-
 def word_count(text):
     """Returns the word count of the given text."""
     return len(text.split())
-
 
 # --- Initialize Session State ---
 def initialize_session_state():
@@ -488,9 +447,7 @@ def initialize_session_state():
         "file_content": "",
         "persona": "Default",
         "model_params": {
-            "model": (
-                "google/gemini-1.0-pro" if GEMINI_API_KEY else "llama-3.1-70b-versatile"
-            ),
+            "model": "google/gemini-1.0-pro" if GEMINI_API_KEY else "llama-3.1-70b-versatile",
             "max_tokens": 1024,
             "temperature": 1.0,
             "top_p": 1.0,
@@ -504,31 +461,23 @@ def initialize_session_state():
         "show_summarization": False,
         "summarization_type": "Main Takeaways",
         "content_type": "Short Story",
-        "provider": (
-            "Google"
-            if GEMINI_API_KEY
-            else "Groq" if GROQ_API_KEY else "OpenAI" if OPENAI_API_KEY else None
-        ),
+        "provider": "Google" if GEMINI_API_KEY else "Groq" if GROQ_API_KEY else "OpenAI" if OPENAI_API_KEY else None,
         "color_scheme": "Light",
     }
     for key, value in default_values.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 # --- Reset Current Chat ---
 def reset_current_chat():
     """Resets the current chat history."""
     st.session_state.messages = []
 
-
-# --- Main Streamlit Application ---
 # --- Main Streamlit Application ---
 async def main():
     """Main function for the Streamlit application."""
     initialize_session_state()
 
-    # Set page configuration at the top of the main function
     st.set_page_config(
         page_title="GenX-Chat",
         page_icon="💬",
@@ -540,39 +489,30 @@ async def main():
         await create_database()
 
     # Select API provider
-    # Center align the title
     st.sidebar.markdown("<h3 style='text-align: center;'>Select Provider</h3>", unsafe_allow_html=True)
     provider_options = ["Google", "Groq", "OpenAI"]
 
-    # Ensure the available providers are based on the keys provided
     available_providers = [
-        p
-        for p in provider_options
+        p for p in provider_options
         if (
-            (p == "Google" and GEMINI_API_KEY)  # Ensure Google is only added if API key is set
+            (p == "Google" and GEMINI_API_KEY)
             or (p == "Groq" and GROQ_API_KEY)
             or (p == "OpenAI" and OPENAI_API_KEY)
         )
     ]
 
     if not available_providers:
-        st.error(
-            "No API keys are set. Please set at least one API key in your .env file."
-        )
+        st.error("No API keys are set. Please set at least one API key in your .env file.")
         st.stop()
 
     selected_provider = st.sidebar.selectbox(
         "Select Provider",
         available_providers,
-        index=(
-            available_providers.index(st.session_state.provider)
-            if st.session_state.provider in available_providers
-            else 0
-        ),
+        index=(available_providers.index(st.session_state.provider) if st.session_state.provider in available_providers else 0),
     )
 
     # Initialize the client based on the selected provider
-    client = None  # Initialize client variable
+    client = None
     if selected_provider == "Google":
         client = get_api_client("Google")
         st.session_state.provider = "Google"
@@ -581,23 +521,17 @@ async def main():
         st.session_state.provider = selected_provider
 
     if client is None and st.session_state.provider != "Google":
-        st.error(
-            f"Failed to initialize {selected_provider} client. Please check your API key and try again."
-        )
+        st.error(f"Failed to initialize {selected_provider} client. Please check your API key and try again.")
         return
+
     # --- Sidebar ---
     with st.sidebar:
-        st.markdown(
-            "<h3 style='text-align: center;'>GenX-Chat Settings</h3>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<h3 style='text-align: center;'>GenX-Chat Settings</h3>", unsafe_allow_html=True)
 
         # Chat Settings
         with st.expander("Chat Settings", expanded=False):
             saved_chats = await get_saved_chat_names()
-            selected_chat = st.selectbox(
-                "Load Chat History", options=[""] + saved_chats
-            )
+            selected_chat = st.selectbox("Load Chat History", options=[""] + saved_chats)
             if selected_chat:
                 await load_chat_history_from_db(selected_chat)
 
@@ -620,65 +554,34 @@ async def main():
         # Model Settings
         with st.expander("Model"):
             model_options = get_model_options(st.session_state.provider)
-            st.session_state.model_params["model"] = st.selectbox(
-                "Choose Model:", options=model_options
-            )
+            st.session_state.model_params["model"] = st.selectbox("Choose Model:", options=model_options)
 
-            max_token_limit = get_max_token_limit(
-                st.session_state.model_params["model"]
-            )
+            max_token_limit = get_max_token_limit(st.session_state.model_params["model"])
             st.session_state.model_params["max_tokens"] = st.slider(
-                "Max Tokens:",
-                min_value=1,
-                max_value=max_token_limit,
-                value=min(1024, max_token_limit),
-                step=1,
+                "Max Tokens:", min_value=1, max_value=max_token_limit, value=min(1024, max_token_limit), step=1
             )
-            st.session_state.model_params["temperature"] = st.slider(
-                "Temperature:", 0.0, 2.0, 1.0, 0.1
-            )
-            st.session_state.model_params["top_p"] = st.slider(
-                "Top-p:", 0.0, 1.0, 1.0, 0.1
-            )
+            st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 2.0, 1.0, 0.1)
+            st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, 1.0, 0.1)
 
         # Persona Settings
         with st.expander("Persona"):
             persona_options = list(PERSONAS.keys())
-            st.session_state.persona = st.selectbox(
-                "Select Persona:",
-                options=persona_options,
-                index=persona_options.index("Default"),
-            )
-            st.text_area(
-                "Persona Description:",
-                value=PERSONAS[st.session_state.persona],
-                height=100,
-                disabled=True,
-            )
+            st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
+            st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
 
         # Audio & Language Settings
         with st.expander("Audio & Language"):
-            st.session_state.enable_audio = st.checkbox(
-                "Enable Audio Response", value=False
-            )
+            st.session_state.enable_audio = st.checkbox("Enable Audio Response", value=False)
             language_options = ["English", "Tamil", "Hindi"]
-            st.session_state.language = st.selectbox(
-                "Select Language:", language_options
-            )
+            st.session_state.language = st.selectbox("Select Language:", language_options)
             if st.session_state.provider == "OpenAI":
-                st.session_state.voice = st.selectbox(
-                    "Select Voice (OpenAI):", VOICE_OPTIONS["OpenAI"]
-                )
+                st.session_state.voice = st.selectbox("Select Voice (OpenAI):", VOICE_OPTIONS["OpenAI"])
             else:
-                st.session_state.voice = st.selectbox(
-                    "Select Language Code (gTTS):", VOICE_OPTIONS["gTTS"]
-                )
+                st.session_state.voice = st.selectbox("Select Language Code (gTTS):", VOICE_OPTIONS["gTTS"])
 
         # File Upload
         with st.expander("File Upload"):
-            uploaded_file = st.file_uploader(
-                "Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"]
-            )
+            uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"])
             if uploaded_file:
                 try:
                     st.session_state.file_content = process_uploaded_file(uploaded_file)
@@ -688,29 +591,18 @@ async def main():
 
         # Summarization
         with st.expander("Summarize"):
-            st.session_state.show_summarization = st.checkbox(
-                "Enable Summarization", value=False
-            )
+            st.session_state.show_summarization = st.checkbox("Enable Summarization", value=False)
             if st.session_state.show_summarization:
                 st.session_state.summarization_type = st.selectbox(
                     "Summarization Type:",
-                    [
-                        "Main Takeaways",
-                        "Main points bulleted",
-                        "Concise Summary",
-                        "Executive Summary",
-                    ],
+                    ["Main Takeaways", "Main points bulleted", "Concise Summary", "Executive Summary"],
                 )
 
         # Content Generation
         with st.expander("Content Generation"):
-            st.session_state.content_creation_mode = st.checkbox(
-                "Enable Content Creation Mode", value=False
-            )
+            st.session_state.content_creation_mode = st.checkbox("Enable Content Creation Mode", value=False)
             if st.session_state.content_creation_mode:
-                st.session_state.content_type = st.selectbox(
-                    "Select Content Type:", list(CONTENT_TYPES.keys())
-                )
+                st.session_state.content_type = st.selectbox("Select Content Type:", list(CONTENT_TYPES.keys()))
 
         # Export Chat
         with st.expander("Export"):
@@ -722,21 +614,18 @@ async def main():
         if st.session_state.color_scheme == "Dark":
             st.markdown(
                 """
-            <style>
-            .stApp {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-            }
-            </style>
-            """,
+                <style>
+                .stApp {
+                    background-color: #1E1E1E;
+                    color: #FFFFFF;
+                }
+                </style>
+                """,
                 unsafe_allow_html=True,
             )
 
     # --- Main Chat Interface ---
-    st.markdown(
-        '<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
 
     # Chat interface
     chat_container = st.container()
@@ -755,7 +644,6 @@ async def main():
     st.sidebar.metric("Total Words", total_words)
     st.sidebar.metric("Total Tokens", st.session_state.total_tokens)
     st.sidebar.metric("Estimated Cost", f"${st.session_state.total_cost:.4f}")
-
 
 async def process_chat_input(prompt: str, client):
     """Processes the user's chat input."""
@@ -784,9 +672,7 @@ async def process_chat_input(prompt: str, client):
                 st.session_state.provider,
                 st.session_state.voice,
             ):
-                if chunk.startswith("API Error:") or chunk.startswith(
-                    "Error in API call:"
-                ):
+                if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
                     message_placeholder.error(chunk)
                     return
                 full_response += chunk
@@ -795,17 +681,12 @@ async def process_chat_input(prompt: str, client):
             message_placeholder.markdown(full_response)
 
         st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append(
-            {"role": "assistant", "content": full_response}
-        )
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         if st.session_state.enable_audio and full_response.strip():
             if st.session_state.provider == "Groq":
                 text_to_speech(full_response, st.session_state.language)
-            st.audio(
-                f"data:audio/mp3;base64,{st.session_state.audio_base64}",
-                format="audio/mp3",
-            )
+            st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
 
         update_token_count(len(full_response.split()))
 
@@ -814,31 +695,20 @@ async def process_chat_input(prompt: str, client):
             content_type = CONTENT_TYPES[st.session_state.content_type]
             generated_content = await create_content(prompt, content_type)
             with st.chat_message("assistant"):
-                st.markdown(
-                    f"## Generated {st.session_state.content_type}:\n\n{generated_content}"
-                )
+                st.markdown(f"## Generated {st.session_state.content_type}:\n\n{generated_content}")
 
         # Handle summarization
         if st.session_state.show_summarization:
-            text_to_summarize = (
-                st.session_state.file_content
-                if st.session_state.file_content
-                else prompt
-            )
-            summary = await summarize_text(
-                text_to_summarize, st.session_state.summarization_type
-            )
+            text_to_summarize = st.session_state.file_content if st.session_state.file_content else prompt
+            summary = await summarize_text(text_to_summarize, st.session_state.summarization_type)
             with st.chat_message("assistant"):
-                st.markdown(
-                    f"## Summary ({st.session_state.summarization_type}):\n\n{summary}"
-                )
+                st.markdown(f"## Summary ({st.session_state.summarization_type}):\n\n{summary}")
 
     except ValueError as ve:
         st.error(f"Invalid input: {str(ve)}")
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
