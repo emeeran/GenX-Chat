@@ -19,7 +19,6 @@ from groq import Groq
 import openai
 import aiosqlite
 from functools import lru_cache
-import google.generativeai as genai
 
 # Import custom modules
 from content_type import CONTENT_TYPES
@@ -29,15 +28,7 @@ from persona import PERSONAS
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-# Check if at least one API key is set
-if not any([GROQ_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY]):
-    st.error(
-        "No API key is set. Please set at least one API key "
-        "(GROQ_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY) in your .env file."
-    )
-    st.stop()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -58,18 +49,87 @@ VOICE_OPTIONS = {
     "gTTS": ["en", "ta", "hi"],
 }
 
+# --- Gemini Function Declarations ---
+GEMINI_FUNCTIONS = [
+    {
+        "name": "get_weather",
+        "description": "Get weather information for a given location.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The name of the city or location.",
+                },
+                "date": {
+                    "type": "string",
+                    "description": "The date for which to retrieve the weather (format: YYYY-MM-DD).",
+                    "optional": True,
+                },
+            },
+            "required": ["location"],
+        },
+    },
+    {
+        "name": "compute_sum",
+        "description": "Computes the sum of two numbers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "number1": {"type": "number", "description": "The first number."},
+                "number2": {"type": "number", "description": "The second number."},
+            },
+            "required": ["number1", "number2"],
+        },
+    },
+    {
+        "name": "translate_text",
+        "description": "Translates text from one language to another.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to translate."},
+                "target_language": {
+                    "type": "string",
+                    "description": "The language code to translate the text into.",
+                },
+            },
+            "required": ["text", "target_language"],
+        },
+    },
+    {
+        "name": "generate_story",
+        "description": "Generates a short story based on a given theme.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "theme": {
+                    "type": "string",
+                    "description": "The theme for the short story.",
+                },
+                "length": {
+                    "type": "integer",
+                    "description": "The desired length of the story in paragraphs.",
+                    "optional": True,
+                },
+            },
+            "required": ["theme"],
+        },
+    },
+]
+
+
 # --- Utility Functions ---
 @lru_cache(maxsize=None)
 def get_api_client(provider: str):
-    """Returns the API client based on the provider."""
+    """Returns the appropriate API client based on the selected provider."""
     try:
         if provider == "Groq":
             return Groq(api_key=GROQ_API_KEY)
         elif provider == "OpenAI":
             return openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
         elif provider == "Google":
-            genai.configure(api_key=GOOGLE_API_KEY)
-            return genai  # Return genai instance
+            return None  # Gemini doesn't use a client object
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     except Exception as e:
@@ -78,7 +138,7 @@ def get_api_client(provider: str):
 
 
 async def create_database():
-    """Creates the chat history database."""
+    """Creates the chat history database if it doesn't exist."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -101,7 +161,7 @@ async def async_stream_llm_response(
     provider: str,
     voice: str = "alloy",
 ):
-    """Streams the LLM response."""
+    """Streams the LLM response asynchronously."""
     try:
         if provider == "Groq":
             async with aiohttp.ClientSession() as session:
@@ -138,12 +198,9 @@ async def async_stream_llm_response(
                                         "choices" in chunk
                                         and chunk["choices"]
                                         and "delta" in chunk["choices"][0]
-                                        and "content"
-                                        in chunk["choices"][0]["delta"]
+                                        and "content" in chunk["choices"][0]["delta"]
                                     ):
-                                        yield chunk["choices"][0]["delta"][
-                                            "content"
-                                        ]
+                                        yield chunk["choices"][0]["delta"]["content"]
                             except json.JSONDecodeError as json_err:
                                 logger.error(
                                     f"JSON decode error: {json_err}. Raw line: {line}"
@@ -171,29 +228,53 @@ async def async_stream_llm_response(
 
             with open(audio_file, "rb") as f:
                 audio_bytes = f.read()
-            st.session_state.audio_base64 = base64.b64encode(
-                audio_bytes
-            ).decode()
+            st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
 
             os.remove(audio_file)
             yield messages[-1]["content"]
 
         elif provider == "Google":
-            if st.session_state.language != "English":
-                assistant_response = translate_text(
-                    messages[-1]["content"], st.session_state.language
-                )
-                messages[-1]["content"] = assistant_response
+            request_body = {
+                "model": params["model"],
+                "prompt": {
+                    "text": messages[-1]["content"],
+                },
+                "tool_code": {"function_declarations": GEMINI_FUNCTIONS},
+            }
 
-            # Google API call
-            response = client.generate_text(
-                model=params["model"],  # Using the model from params
-                prompt=messages[-1]["content"],
-                temperature=params.get("temperature", 0.7),
-                max_output_tokens=params.get("max_output_tokens", 2048),
-            )
+            headers = {
+                "Authorization": f"Bearer {GEMINI_API_KEY}",
+                "Content-Type": "application/json",
+            }
 
-            yield response.text  # Yield the generated text
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.google.com/v1/generative/text:generateText",
+                    json=request_body,
+                    headers=headers,
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if "candidates" in data and data["candidates"]:
+                            candidate = data["candidates"][0]
+                            if "function_call" in candidate:
+                                function_call = candidate["function_call"]
+                                function_name = function_call["name"]
+                                function_args = json.loads(
+                                    function_call.get("arguments", "{}")
+                                )
+                                yield f"Function Call: {function_name}\nArguments: {function_args}"
+                            else:
+                                yield candidate["output"]
+                        else:
+                            logger.error(f"Google API response error: {data}")
+                            yield f"Error in Google API response: {data}"
+                    else:
+                        error_text = await response.text()
+                        logger.error(
+                            f"Google API Error: {response.status} - {error_text}"
+                        )
+                        yield f"Google API Error: {response.status} - {error_text}"
 
     except Exception as e:
         logger.error(f"Error in API call: {str(e)}")
@@ -201,13 +282,13 @@ async def async_stream_llm_response(
 
 
 def validate_prompt(prompt: str):
-    """Validates the user prompt."""
+    """Validates the user prompt to ensure it's not empty."""
     if not prompt.strip():
         raise ValueError("Prompt cannot be empty")
 
 
 def process_uploaded_file(uploaded_file):
-    """Processes the uploaded file."""
+    """Processes the uploaded file based on its type."""
     file_handlers = {
         "application/pdf": lambda f: " ".join(
             page.extract_text() for page in PyPDF2.PdfReader(f).pages
@@ -227,7 +308,7 @@ def process_uploaded_file(uploaded_file):
 
 
 def text_to_speech(text: str, lang: str):
-    """Converts text to speech."""
+    """Converts text to speech using gTTS."""
     lang_map = {"English": "en", "Tamil": "ta", "Hindi": "hi"}
     lang_code = lang_map.get(lang, "en")
     tts = gTTS(text=text, lang=lang_code)
@@ -240,7 +321,7 @@ def text_to_speech(text: str, lang: str):
 
 
 def translate_text(text: str, target_lang: str) -> str:
-    """Translates the text."""
+    """Translates text to the target language."""
     if target_lang == "English":
         return text
     translator = GoogleTranslator(source="auto", target=target_lang)
@@ -248,13 +329,15 @@ def translate_text(text: str, target_lang: str) -> str:
 
 
 def update_token_count(tokens: int):
-    """Updates the token count."""
+    """Updates the token count and estimated cost in the session state."""
     st.session_state.total_tokens += tokens
-    st.session_state.total_cost += tokens * 0.0001
+    st.session_state.total_cost += (
+        tokens * 0.0001
+    )  # Assuming a cost of $0.0001 per token
 
 
 def export_chat(format: str):
-    """Exports the chat history."""
+    """Exports the chat history in the chosen format."""
     chat_history = "\n\n".join(
         [
             f"**{m['role'].capitalize()}:** {m['content']}"
@@ -280,7 +363,7 @@ def export_chat(format: str):
 
 # --- Chat History Management ---
 async def save_chat_history_to_db(chat_name: str):
-    """Saves the chat history to the database."""
+    """Saves the current chat history to the database."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executemany(
             "INSERT INTO chat_history (chat_name, role, content) VALUES (?, ?, ?)",
@@ -299,25 +382,28 @@ async def load_chat_history_from_db(chat_name: str):
             "SELECT role, content FROM chat_history WHERE chat_name = ? ORDER BY id",
             (chat_name,),
         ) as cursor:
-            messages = [
-                {"role": row[0], "content": row[1]} async for row in cursor
-            ]
+            messages = [{"role": row[0], "content": row[1]} async for row in cursor]
     st.session_state.messages = messages
 
 
 async def get_saved_chat_names():
     """Retrieves saved chat names from the database."""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT DISTINCT chat_name FROM chat_history"
-        ) as cursor:
+        async with db.execute("SELECT DISTINCT chat_name FROM chat_history") as cursor:
             chat_names = [row[0] async for row in cursor]
     return chat_names
 
 
+async def delete_chat(chat_name):
+    """Deletes a chat by its name from the database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM chat_history WHERE chat_name = ?", (chat_name,))
+        await db.commit()
+
+
 # --- Content Creation (Uses LLM) ---
 async def create_content(prompt: str, content_type: str) -> str:
-    """Generates content using the LLM."""
+    """Uses the LLM to generate content based on the prompt and content type."""
     full_prompt = f"Write a {content_type} based on this prompt: {prompt}"
     generated_content = ""
     async for chunk in async_stream_llm_response(
@@ -333,10 +419,8 @@ async def create_content(prompt: str, content_type: str) -> str:
 
 # --- Summarization (Uses LLM) ---
 async def summarize_text(text: str, summary_type: str) -> str:
-    """Summarizes text using the LLM."""
-    full_prompt = (
-        f"Please provide a {summary_type} of the following text: {text}"
-    )
+    """Uses the LLM to summarize the given text."""
+    full_prompt = f"Please provide a {summary_type} of the following text: {text}"
     summary = ""
     async for chunk in async_stream_llm_response(
         get_api_client(st.session_state.provider),
@@ -349,16 +433,64 @@ async def summarize_text(text: str, summary_type: str) -> str:
     return summary
 
 
+# --- Helper Functions ---
+def get_model_options(provider):
+    """Returns a list of available model options based on the provider."""
+    if provider == "Google":
+        return [
+            "google/gemini-1.0-pro",
+            "google/gemini-1.0-pro-001",
+            "google/gemini-1.5-flash-latest",
+            "google/gemini-1.5-pro-latest",
+        ]
+    elif provider == "Groq":
+        return [
+            "llama-3.1-70b-versatile",
+            "llama-3.1-405b-reasoning",
+            "llama-3.1-8b-instant",
+            "llama3-groq-70b-8192-tool-use-preview",
+            "llama3-70b-8192",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it",
+            "whisper-large-v3",
+        ]
+    elif provider == "OpenAI":
+        return [
+            "gpt-4o-mini",
+            "gpt-4o",
+            "gpt-3.5-turbo",
+        ]
+    return []
+
+
+def get_max_token_limit(model):
+    """Returns the maximum token limit for the specified model."""
+    if "mixtral-8x7b-32768" in model:
+        return 32768
+    elif "llama-3.1-70b-versatile-131072" in model:
+        return 131072
+    elif "gemma2-9b-it" in model:
+        return 8192
+    return 4096
+
+
+def word_count(text):
+    """Returns the word count of the given text."""
+    return len(text.split())
+
+
 # --- Initialize Session State ---
 def initialize_session_state():
-    """Initializes the session state."""
+    """Initializes the Streamlit session state with default values."""
     default_values = {
         "messages": [],
         "audio_base64": "",
         "file_content": "",
         "persona": "Default",
         "model_params": {
-            "model": "llama-3.1-70b-versatile",
+            "model": (
+                "google/gemini-1.0-pro" if GEMINI_API_KEY else "llama-3.1-70b-versatile"
+            ),
             "max_tokens": 1024,
             "temperature": 1.0,
             "top_p": 1.0,
@@ -372,11 +504,12 @@ def initialize_session_state():
         "show_summarization": False,
         "summarization_type": "Main Takeaways",
         "content_type": "Short Story",
-        "provider": "Groq"
-        if GROQ_API_KEY
-        else "OpenAI"
-        if OPENAI_API_KEY
-        else "Google",
+        "provider": (
+            "Google"
+            if GEMINI_API_KEY
+            else "Groq" if GROQ_API_KEY else "OpenAI" if OPENAI_API_KEY else None
+        ),
+        "color_scheme": "Light",
     }
     for key, value in default_values.items():
         if key not in st.session_state:
@@ -385,16 +518,16 @@ def initialize_session_state():
 
 # --- Reset Current Chat ---
 def reset_current_chat():
-    """Resets the current chat."""
+    """Resets the current chat history."""
     st.session_state.messages = []
 
 
 # --- Main Streamlit Application ---
 async def main():
-    """Main function for the Streamlit app."""
+    """Main function for the Streamlit application."""
     initialize_session_state()
-    await create_database()
 
+    # Set page configuration at the top of the main function
     st.set_page_config(
         page_title="GenX-Chat",
         page_icon="💬",
@@ -402,30 +535,54 @@ async def main():
         initial_sidebar_state="expanded",
     )
 
+    with st.spinner("Creating database..."):
+        await create_database()
+
     # Select API provider
-    st.sidebar.title("API Provider")
-    provider_options = ["Groq", "OpenAI", "Google"]
+    # Center align the title
+    st.sidebar.markdown("<h3 style='text-align: center;'>Select Provider</h3>", unsafe_allow_html=True)
+    provider_options = ["Google", "Groq", "OpenAI"]
+
+    # Ensure the available providers are based on the keys provided
     available_providers = [
-        p for p in provider_options if globals()[f"{p.upper()}_API_KEY"]
+        p
+        for p in provider_options
+        if (
+            (p == "Google" and GEMINI_API_KEY)
+            or (p == "Groq" and GROQ_API_KEY)
+            or (p == "OpenAI" and OPENAI_API_KEY)
+        )
     ]
+
+    if not available_providers:
+        st.error(
+            "No API keys are set. Please set at least one API key in your .env file."
+        )
+        st.stop()
+
     selected_provider = st.sidebar.selectbox(
         "Select Provider",
         available_providers,
-        index=available_providers.index(st.session_state.provider)
-        if st.session_state.provider in available_providers
-        else 0,
+        index=(
+            available_providers.index(st.session_state.provider)
+            if st.session_state.provider in available_providers
+            else 0
+        ),
     )
 
-    # Initialize the correct client based on the selected provider
-    client = get_api_client(selected_provider)
+    # Initialize the client based on the selected provider
+    if selected_provider == "Google":
+        client = get_api_client("Google")
+        st.session_state.provider = "Google"
+    else:
+        client = get_api_client(selected_provider)
+        st.session_state.provider = selected_provider
 
-    if client is None and selected_provider != "Google":
+    if client is None and st.session_state.provider != "Google":
         st.error(
             f"Failed to initialize {selected_provider} client. Please check your API key and try again."
         )
         return
-
-    st.session_state.provider = selected_provider
 
     # --- Sidebar ---
     with st.sidebar:
@@ -435,7 +592,7 @@ async def main():
         )
 
         # Chat Settings
-        with st.expander("Chat Settings", expanded=True):
+        with st.expander("Chat Settings", expanded=False):
             saved_chats = await get_saved_chat_names()
             selected_chat = st.selectbox(
                 "Load Chat History", options=[""] + saved_chats
@@ -443,63 +600,32 @@ async def main():
             if selected_chat:
                 await load_chat_history_from_db(selected_chat)
 
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 if st.button("Save Chat"):
                     chat_name = st.text_input("Enter a name for this chat:")
                     if chat_name:
-                        asyncio.create_task(
-                            save_chat_history_to_db(chat_name)
-                        )
+                        await save_chat_history_to_db(chat_name)
+                        st.success(f"Chat '{chat_name}' saved successfully.")
             with col2:
-                reset_button = st.button(
-                    "Reset Chat", on_click=reset_current_chat
-                )
+                reset_button = st.button("Reset Chat", on_click=reset_current_chat)
+            with col3:
+                if st.button("Delete Chat"):
+                    if selected_chat:
+                        await delete_chat(selected_chat)
+                        st.success(f"Chat '{selected_chat}' deleted successfully.")
+                        st.experimental_rerun()
 
         # Model Settings
         with st.expander("Model"):
-            if st.session_state.provider == "Groq":
-                st.session_state.model_params["model"] = st.selectbox(
-                    "Choose Model:",
-                    options=[
-                        "llama-3.1-70b-versatile",
-                        "llama-3.1-405b-reasoning",
-                        "llama-3.1-8b-instant",
-                        "llama3-groq-70b-8192-tool-use-preview",
-                        "llama3-70b-8192",
-                        "mixtral-8x7b-32768",
-                        "gemma2-9b-it",
-                        "whisper-large-v3",
-                    ],
-                )
-            elif st.session_state.provider == "OpenAI":
-                st.session_state.model_params["model"] = st.selectbox(
-                    "Choose Model:",
-                    options=["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-                )
-            elif st.session_state.provider == "Google":
-                st.session_state.model_params["model"] = st.selectbox(
-                    "Choose Model:",
-                    options=[
-                        "gemini-1.5-pro",
-                        "gemini-1.5-flash",
-                        "gemini-1.0-pro",
-                        "gemma-2",
-                    ],
-                )
+            model_options = get_model_options(st.session_state.provider)
+            st.session_state.model_params["model"] = st.selectbox(
+                "Choose Model:", options=model_options
+            )
 
-            # Set appropriate max token limits based on the chosen model
-            max_token_limit = 4096
-            if st.session_state.model_params["model"] == "mixtral-8x7b-32768":
-                max_token_limit = 32768
-            elif (
+            max_token_limit = get_max_token_limit(
                 st.session_state.model_params["model"]
-                == "llama-3.1-70b-versatile-131072"
-            ):
-                max_token_limit = 131072
-            elif st.session_state.model_params["model"] == "gemma2-9b-it":
-                max_token_limit = 8192
-
+            )
             st.session_state.model_params["max_tokens"] = st.slider(
                 "Max Tokens:",
                 min_value=1,
@@ -547,17 +673,14 @@ async def main():
                     "Select Language Code (gTTS):", VOICE_OPTIONS["gTTS"]
                 )
 
-        # File Upload (moved above Summarization)
+        # File Upload
         with st.expander("File Upload"):
             uploaded_file = st.file_uploader(
-                "Upload a file",
-                type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"],
+                "Upload a file", type=["pdf", "docx", "txt", "md", "jpg", "jpeg", "png"]
             )
             if uploaded_file:
                 try:
-                    st.session_state.file_content = process_uploaded_file(
-                        uploaded_file
-                    )
+                    st.session_state.file_content = process_uploaded_file(uploaded_file)
                     st.success("File processed successfully")
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
@@ -578,11 +701,34 @@ async def main():
                     ],
                 )
 
+        # Content Generation
+        with st.expander("Content Generation"):
+            st.session_state.content_creation_mode = st.checkbox(
+                "Enable Content Creation Mode", value=False
+            )
+            if st.session_state.content_creation_mode:
+                st.session_state.content_type = st.selectbox(
+                    "Select Content Type:", list(CONTENT_TYPES.keys())
+                )
+
         # Export Chat
         with st.expander("Export"):
             export_format = st.selectbox("Export Format", ["md", "pdf"])
-            st.button(
-                "Export Chat", on_click=lambda: export_chat(export_format)
+            st.button("Export Chat", on_click=lambda: export_chat(export_format))
+
+        # Color Scheme
+        st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
+        if st.session_state.color_scheme == "Dark":
+            st.markdown(
+                """
+            <style>
+            .stApp {
+                background-color: #1E1E1E;
+                color: #FFFFFF;
+            }
+            </style>
+            """,
+                unsafe_allow_html=True,
             )
 
     # --- Main Chat Interface ---
@@ -603,16 +749,20 @@ async def main():
     if prompt:
         await process_chat_input(prompt, client)
 
+    # Display metrics
+    total_words = sum(word_count(msg["content"]) for msg in st.session_state.messages)
+    st.sidebar.metric("Total Words", total_words)
+    st.sidebar.metric("Total Tokens", st.session_state.total_tokens)
+    st.sidebar.metric("Estimated Cost", f"${st.session_state.total_cost:.4f}")
+
 
 async def process_chat_input(prompt: str, client):
-    """Processes chat input."""
+    """Processes the user's chat input."""
     try:
         validate_prompt(prompt)
 
         if st.session_state.file_content:
-            prompt = (
-                f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
-            )
+            prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
 
         messages = [
             {"role": "system", "content": PERSONAS[st.session_state.persona]},
@@ -643,9 +793,7 @@ async def process_chat_input(prompt: str, client):
 
             message_placeholder.markdown(full_response)
 
-        st.session_state.messages.append(
-            {"role": "user", "content": prompt}
-        )
+        st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.messages.append(
             {"role": "assistant", "content": full_response}
         )
@@ -688,9 +836,7 @@ async def process_chat_input(prompt: str, client):
         st.error(f"Invalid input: {str(ve)}")
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
-        logger.error(
-            f"Unexpected error in process_chat_input: {str(e)}", exc_info=True
-        )
+        logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
 
 
 if __name__ == "__main__":
