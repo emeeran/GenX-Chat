@@ -103,8 +103,6 @@ async def main():
     with st.spinner("Creating database..."):
         await create_database()
 
-#color: #6ca395;
-    # st.sidebar.markdown("<h1 style='text-align: center;color: #6ca395;'>Welcome to GenX-Chat!</h1>", unsafe_allow_html=True)
 
     # --- API Selection ---
     st.sidebar.markdown("<h2 style='text-align: center;color: #6ca395;'>Select Provider</h2>", unsafe_allow_html=True)
@@ -129,8 +127,8 @@ async def main():
     #     index=(available_providers.index(st.session_state.provider) if st.session_state.provider in available_providers else 0),
     # )
     selected_provider = st.sidebar.selectbox(
-        "",  # Empty string to hide the label
-        ["Groq", "Google", "OpenAI"],  # Example options
+        "Test",  # Empty string to hide the label
+        ["Groq", "Google", "OpenAI"], label_visibility="collapsed", # Example options
         format_func=lambda x: "Select Provider" if x == "" else x,  # Placeholder text
     )
     
