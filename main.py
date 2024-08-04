@@ -103,8 +103,11 @@ async def main():
     with st.spinner("Creating database..."):
         await create_database()
 
+#color: #6ca395;
+    # st.sidebar.markdown("<h1 style='text-align: center;color: #6ca395;'>Welcome to GenX-Chat!</h1>", unsafe_allow_html=True)
+
     # --- API Selection ---
-    st.sidebar.markdown("<h3 style='text-align: center;'>Select Provider</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h2 style='text-align: center;color: #6ca395;'>Select Provider</h2>", unsafe_allow_html=True)
     provider_options = ["Google", "Groq", "OpenAI"]
 
     available_providers = [
@@ -120,12 +123,17 @@ async def main():
         st.error("No API keys are set. Please set at least one API key in your .env file.")
         st.stop()
 
+    # selected_provider = st.sidebar.selectbox(
+    #     "Select Provider",
+    #     available_providers,
+    #     index=(available_providers.index(st.session_state.provider) if st.session_state.provider in available_providers else 0),
+    # )
     selected_provider = st.sidebar.selectbox(
-        "Select Provider",
-        available_providers,
-        index=(available_providers.index(st.session_state.provider) if st.session_state.provider in available_providers else 0),
+        "",  # Empty string to hide the label
+        ["Groq", "Google", "OpenAI"],  # Example options
+        format_func=lambda x: "Select Provider" if x == "" else x,  # Placeholder text
     )
-
+    
     st.session_state.provider = selected_provider
 
     # Initialize API client
@@ -136,7 +144,7 @@ async def main():
 
     # --- Sidebar ---
     with st.sidebar:
-        st.markdown("<h3 style='text-align: center;'>GenX-Chat Settings</h3>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>⚙️ Settings</h2>", unsafe_allow_html=True)
 
         # Chat Settings
         with st.expander("Chat Settings", expanded=False):
