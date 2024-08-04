@@ -523,6 +523,7 @@ def reset_current_chat():
 
 
 # --- Main Streamlit Application ---
+# --- Main Streamlit Application ---
 async def main():
     """Main function for the Streamlit application."""
     initialize_session_state()
@@ -548,7 +549,7 @@ async def main():
         p
         for p in provider_options
         if (
-            (p == "Google" and GEMINI_API_KEY)
+            (p == "Google" and GEMINI_API_KEY)  # Ensure Google is only added if API key is set
             or (p == "Groq" and GROQ_API_KEY)
             or (p == "OpenAI" and OPENAI_API_KEY)
         )
@@ -571,6 +572,7 @@ async def main():
     )
 
     # Initialize the client based on the selected provider
+    client = None  # Initialize client variable
     if selected_provider == "Google":
         client = get_api_client("Google")
         st.session_state.provider = "Google"
@@ -583,7 +585,6 @@ async def main():
             f"Failed to initialize {selected_provider} client. Please check your API key and try again."
         )
         return
-
     # --- Sidebar ---
     with st.sidebar:
         st.markdown(
