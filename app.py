@@ -269,7 +269,8 @@ async def main():
         return
 
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
-
+    st.markdown('<p style="text-align: center; color : #74a6d4">Experience the power of AI!</p>', unsafe_allow_html=True)
+    
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
@@ -287,4 +288,5 @@ async def main():
 
 if __name__ == "__main__":
     st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
+    
     asyncio.run(main())
