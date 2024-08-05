@@ -179,14 +179,11 @@ async def main():
             st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 2.0, 1.0, 0.1)
             st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, 1.0, 0.1)
 
-        # --- Persona Settings ---
+        # Persona Settings
         with st.expander("Persona"):
             persona_options = list(PERSONAS.keys())
             st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
-            if st.session_state.persona == "Custom":
-                st.session_state.custom_persona = st.text_area("Enter Custom Persona:", value="", height=100)
-            else:
-                st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
+            st.text_area("Persona Description:", value=PERSONAS[st.session_state.persona], height=100, disabled=True)
 
         # Audio & Language Settings
         with st.expander("Audio & Language"):
@@ -251,10 +248,7 @@ async def main():
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
             with st.chat_message(message["role"]):
-                if st.session_state.persona == "Custom" and message["role"] == "assistant":
-                    st.markdown(st.session_state.custom_persona)
-                else:
-                    st.markdown(message["content"])
+                st.markdown(message["content"])
 
     # Input
     prompt = st.chat_input("Enter your message:")
@@ -298,10 +292,11 @@ async def process_chat_input(prompt: str, client):
             prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:4000]}..."
 
         messages = [
-            {"role": "system", "content": PERSONAS[st.session_state.persona] if st.session_state.persona != "Custom" else st.session_state.custom_persona},
+            {"role": "system", "content": PERSONAS[st.session_state.persona]},
             *st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:],
             {"role": "user", "content": prompt},
         ]
+
         with st.chat_message("user"):
             st.markdown(prompt)
 

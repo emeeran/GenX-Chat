@@ -79,19 +79,20 @@ def export_chat(format: str):
         [f"**{m['role'].capitalize()}:** {m['content']}" for m in st.session_state.messages]
     )
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"chat_history_{timestamp}.{format}"
+    filename = f"chat_exports/chat_history_{timestamp}.{format}"
     os.makedirs("chat_exports", exist_ok=True)
 
     if format == "md":
-        data = f"# Chat History\n\n{chat_history}".encode("utf-8")
-        st.download_button("Download Markdown", data=data, file_name=filename)
+        with open(filename, "w") as f:
+            f.write(chat_history)
+        st.download_button("Download Markdown", filename, file_name=filename)
     elif format == "pdf":
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, chat_history)
-        data = pdf.output(dest="S").encode("latin-1")
-        st.download_button("Download PDF", data=data, file_name=filename)
+        pdf.output(filename)
+        st.download_button("Download PDF", filename, file_name=filename)
 
 # --- Chat History Management ---
 async def create_database():
@@ -182,12 +183,10 @@ def get_model_options(provider):
     """Returns a list of available model options based on the provider."""
     if provider == "Google":
         return [
-            "google/gemini-1.5-pro"
-            "google/gemini-1.5-flash"
-            # "google/gemini-1.0-pro",
-            # "google/gemini-1.0-pro-001",
-            # "google/gemini-1.5-flash-latest",
-            # "google/gemini-1.5-pro-latest",
+            "google/gemini-1.0-pro",
+            "google/gemini-1.0-pro-001",
+            "google/gemini-1.5-flash-latest",
+            "google/gemini-1.5-pro-latest",
         ]
     elif provider == "Groq":
         return [
