@@ -19,7 +19,7 @@ async def async_stream_openai_response(
     params: Dict[str, Any], 
     messages: List[Dict[str, str]], 
     voice: str = "alloy",
-) -> str:
+):
     """Streams the OpenAI LLM response asynchronously."""
     try:
         if st.session_state.language != "English":
@@ -28,22 +28,15 @@ async def async_stream_openai_response(
             )
             messages[-1]["content"] = assistant_response
 
-        response = await client.audio.speech.create(
-            model="tts-1",
-            voice=voice,
-            input=messages[-1]["content"],
+        response = await client.chat.completions.create(
+            model=params["model"],
+            messages=[{"role": "assistant", "content": messages[-1]["content"]}],
+            max_tokens=params["max_tokens"],
+            temperature=params["temperature"],
+            top_p=params["top_p"],
         )
 
-        audio_file = "temp_audio.mp3"
-        with open(audio_file, "wb") as f:
-            f.write(response.content)
-
-        with open(audio_file, "rb") as f:
-            audio_bytes = f.read()
-        st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
-
-        os.remove(audio_file)
-        yield messages[-1]["content"]
+        yield response.choices[0].message.content
 
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
