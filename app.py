@@ -103,7 +103,6 @@ async def main():
     with st.spinner("Creating database..."):
         await create_database()
 
-
     # --- API Selection ---
     st.sidebar.markdown("<h2 style='text-align: center;color: #6ca395;'>Select Provider</h2>", unsafe_allow_html=True)
     provider_options = ["Google", "Groq", "OpenAI"]
@@ -146,30 +145,41 @@ async def main():
             if selected_chat:
                 await load_chat_history_from_db(selected_chat)
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("Save Chat"):
-                    chat_name = st.text_input("Enter a name for this chat:", max_chars=50, label_visibility="collapsed")
-                    if chat_name:
-                        await save_chat_history_to_db(chat_name)
-                        st.success(f"Chat '{chat_name}' saved successfully.")
-            with col2:
-                reset_button = st.button("Reset Chat", on_click=reset_current_chat)
-            with col3:
-                if st.button("Delete Chat"):
+            # Add Retry, New buttons
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                if st.button("Retry"):
+                    st.rerun()  # This will rerun the app and reset the session
+            with col5:
+                if st.button("New"):
+                    reset_current_chat()  # Reset current chat state
+                    
+            with col6:
+                if st.button("Delete"):
                     if selected_chat:
                         await delete_chat(selected_chat)
                         st.success(f"Chat '{selected_chat}' deleted successfully.")
                         st.rerun()
 
-            # Add Retry, New buttons
-            col4, col5 = st.columns(2)
-            with col4:
-                if st.button("Retry Chat"):
-                    st.rerun()  # This will rerun the app and reset the session
-            with col5:
-                if st.button("New Chat"):
-                    reset_current_chat()  # Reset current chat state
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                chat_name_input = st.text_input(
+                    "Enter a name for this chat:", 
+                    max_chars=50, 
+                    label_visibility="collapsed",
+                    placeholder="Chat Name",
+                    help="Type a name for your chat",
+                    )
+            with col2:
+                if st.button("Save"):
+                    if chat_name_input:
+                        await save_chat_history_to_db(chat_name_input)
+                        st.success(f"Chat '{chat_name_input}' saved successfully.")
+
+            with st.container():
+                reset_button = st.button("Reset", on_click=reset_current_chat)
+
+            
 
         # Model Settings
         with st.expander("Model"):
@@ -264,7 +274,6 @@ async def main():
     st.sidebar.metric("Total Words", total_words)
     st.sidebar.metric("Total Tokens", st.session_state.total_tokens)
     st.sidebar.metric("Estimated Cost", f"${st.session_state.total_cost:.4f}")
-
 
 # --- Function to Handle LLM Response based on Provider ---
 async def async_stream_llm_response(
