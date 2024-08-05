@@ -121,17 +121,12 @@ async def main():
         st.error("No API keys are set. Please set at least one API key in your .env file.")
         st.stop()
 
-    # selected_provider = st.sidebar.selectbox(
-    #     "Select Provider",
-    #     available_providers,
-    #     index=(available_providers.index(st.session_state.provider) if st.session_state.provider in available_providers else 0),
-    # )
     selected_provider = st.sidebar.selectbox(
         "Test",  # Empty string to hide the label
         ["Groq", "Google", "OpenAI"], label_visibility="collapsed", # Example options
         format_func=lambda x: "Select Provider" if x == "" else x,  # Placeholder text
     )
-    
+
     st.session_state.provider = selected_provider
 
     # Initialize API client
@@ -145,7 +140,7 @@ async def main():
         st.markdown("<h2 style='text-align: center;'>⚙️ Settings</h2>", unsafe_allow_html=True)
 
         # Chat Settings
-        with st.expander("Chat Settings", expanded=False):
+        with st.expander("Chat Settings", expanded=True):
             saved_chats = await get_saved_chat_names()
             selected_chat = st.selectbox("Load Chat History", options=[""] + saved_chats)
             if selected_chat:
@@ -154,7 +149,7 @@ async def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 if st.button("Save Chat"):
-                    chat_name = st.text_input("Enter a name for this chat:")
+                    chat_name = st.text_input("Enter a name for this chat:", max_chars=50, label_visibility="collapsed")
                     if chat_name:
                         await save_chat_history_to_db(chat_name)
                         st.success(f"Chat '{chat_name}' saved successfully.")
@@ -165,7 +160,16 @@ async def main():
                     if selected_chat:
                         await delete_chat(selected_chat)
                         st.success(f"Chat '{selected_chat}' deleted successfully.")
-                        st.experimental_rerun()
+                        st.rerun()
+
+            # Add Retry, New buttons
+            col4, col5 = st.columns(2)
+            with col4:
+                if st.button("Retry Chat"):
+                    st.rerun()  # This will rerun the app and reset the session
+            with col5:
+                if st.button("New Chat"):
+                    reset_current_chat()  # Reset current chat state
 
         # Model Settings
         with st.expander("Model"):
