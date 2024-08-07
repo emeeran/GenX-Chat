@@ -1,19 +1,8 @@
 import os
 import base64
-from gtts import gTTS
-import PyPDF2
-import docx
-import pytesseract
-from deep_translator import GoogleTranslator
-from datetime import datetime
-from fpdf import FPDF
-from dotenv import load_dotenv
 import logging
 import asyncio
-import aiohttp
-import streamlit as st
 import json
-from PIL import Image
 from typing import List, Dict, Any
 from functools import lru_cache
 
@@ -51,7 +40,6 @@ MAX_FILE_CONTENT_LENGTH = 4000
 TRUNCATION_ELLIPSIS = "..."
 CHUNK_SIZE = 2000
 
-# --- Voice Options ---
 VOICE_OPTIONS = {
     "OpenAI": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
     "gTTS": ["en", "ta", "hi"],
@@ -392,7 +380,7 @@ async def process_chat_input(prompt: str, client: Any) -> None:
                 st.session_state.provider,
                 st.session_state.voice,
             ):
-                if chunk.startswith("API Error:") or chunk.startswith("Error in API call:"):
+                if chunk.startswith("API Error:"):
                     message_placeholder.error(chunk)
                     return
                 full_response += chunk
@@ -400,8 +388,10 @@ async def process_chat_input(prompt: str, client: Any) -> None:
 
             message_placeholder.markdown(full_response)
 
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        st.session_state.messages.extend([
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": full_response}
+        ])
 
         if st.session_state.enable_audio and full_response.strip():
             if st.session_state.provider != "OpenAI":
@@ -410,16 +400,14 @@ async def process_chat_input(prompt: str, client: Any) -> None:
 
         update_token_count(len(full_response.split()))
 
-        # Handle content creation
         if st.session_state.content_creation_mode:
             content_type = CONTENT_TYPES[st.session_state.content_type]
             generated_content = await create_content(prompt, content_type)
             with st.chat_message("assistant"):
                 st.markdown(f"## Generated {st.session_state.content_type}:\n\n{generated_content}")
 
-        # Handle summarization
         if st.session_state.show_summarization:
-            text_to_summarize = st.session_state.file_content if st.session_state.file_content else prompt
+            text_to_summarize = st.session_state.file_content or prompt
             summary = await summarize_text(text_to_summarize, st.session_state.summarization_type)
             with st.chat_message("assistant"):
                 st.markdown(f"## Summary ({st.session_state.summarization_type}):\n\n{summary}")
@@ -427,7 +415,6 @@ async def process_chat_input(prompt: str, client: Any) -> None:
     except ValueError as ve:
         st.error(f"Invalid input: {str(ve)}")
     except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
         logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
         st.error(f"An unexpected error occurred. Please try again later.")
 
@@ -619,4 +606,5 @@ def validate_api_keys():
         st.warning(f"Missing API keys for: {', '.join(missing_keys)}. Some features may be unavailable.")
 
 if __name__ == "__main__":
+    st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
