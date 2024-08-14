@@ -4,7 +4,8 @@ import logging
 import asyncio
 import json
 from typing import List, Dict, Any
-from functools import lru_cache  # Import lru_cache from functools
+from functools import lru_cache
+
 import streamlit as st
 from dotenv import load_dotenv
 from gtts import gTTS
@@ -118,7 +119,6 @@ def export_chat(format: str):
         pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, chat_history)
         pdf.output(filename)
-        st.download_button
         st.download_button("Download PDF", filename, file_name=filename)
 
 async def create_database():
@@ -226,11 +226,8 @@ def initialize_session_state():
         "model_params": {
             "model": "llama-3.1-70b-versatile",
             "max_tokens": 1024,
-            "temperature": 0.5,  # Adjusted recommended value
-            "top_p": 0.9,       # Adjusted recommended value
-            "top_k": 50,        # Added recommended top-k value
-            "frequency_penalty": 0.5,   # Added recommended frequency penalty
-            "presence_penalty": 0.5,    # Added recommended presence penalty
+            "temperature": 1.0,
+            "top_p": 1.0,
         },
         "total_tokens": 0,
         "total_cost": 0,
@@ -271,8 +268,6 @@ async def async_stream_groq_response(client, params: Dict[str, Any], messages: L
                         "max_tokens": params.get("max_tokens"),
                         "temperature": params.get("temperature"),
                         "top_p": params.get("top_p"),
-                        "frequency_penalty": params.get("frequency_penalty"),      # Added frequency penalty
-                        "presence_penalty": params.get("presence_penalty"),        # Added presence penalty
                         "stream": True,
                     },
                 ) as response:
@@ -315,15 +310,9 @@ async def async_stream_openai_response(client, params: Dict[str, Any], messages:
             max_tokens=params["max_tokens"],
             temperature=params["temperature"],
             top_p=params["top_p"],
-            frequency_penalty=params.get("frequency_penalty"),     # Added frequency penalty
-            presence_penalty=params.get("presence_penalty"),       # Added presence penalty
         )
 
         yield response.choices[0].message.content
-
-    except Exception as e:
-        logger.error(f"Error in OpenAI API call: {str(e)}")
-        yield f"Error in OpenAI API call: {str(e)}"
 
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
@@ -372,7 +361,7 @@ async def process_chat_input(prompt: str, client: Any) -> None:
             prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:MAX_FILE_CONTENT_LENGTH]}{TRUNCATION_ELLIPSIS}"
 
         persona_content = st.session_state.custom_persona if st.session_state.persona == "Custom" else PERSONAS[st.session_state.persona]
-
+        
         messages = [
             {"role": "system", "content": persona_content},
             *st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:],
@@ -485,9 +474,6 @@ def setup_sidebar() -> None:
                     "max_tokens": 1024,
                     "temperature": 1.0,
                     "top_p": 1.0,
-                    "top_k": 50,        # Added top_k to default values
-                    "frequency_penalty": 0.5,   # Added frequency penalty to default values
-                    "presence_penalty": 0.5,    # Added presence penalty to default values
                 }
 
             st.session_state.model_params["model"] = st.selectbox("Choose Model:", options=model_options, index=model_options.index(st.session_state.model_params["model"]) if st.session_state.model_params["model"] in model_options else 0)
@@ -496,14 +482,11 @@ def setup_sidebar() -> None:
             st.session_state.model_params["max_tokens"] = st.slider("Max Tokens:", min_value=1, max_value=max_token_limit, value=min(st.session_state.model_params["max_tokens"], max_token_limit), step=1)
             st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 2.0, st.session_state.model_params["temperature"], 0.1)
             st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, st.session_state.model_params["top_p"], 0.1)
-            st.session_state.model_params["top_k"] = st.slider("Top-k:", 0, 100, st.session_state.model_params["top_k"])  # Added slider for top_k
-            st.session_state.model_params["frequency_penalty"] = st.slider("Frequency Penalty:", 0.0, 1.0, st.session_state.model_params["frequency_penalty"], 0.1)  # Added slider for frequency penalty
-            st.session_state.model_params["presence_penalty"] = st.slider("Presence Penalty:", 0.0, 1.0, st.session_state.model_params["presence_penalty"], 0.1)  # Added slider for presence penalty
 
         with st.expander("Persona"):
             persona_options = list(PERSONAS.keys()) + ["Custom"]
             st.session_state.persona = st.selectbox("Select Persona:", options=persona_options, index=persona_options.index("Default"))
-
+            
             if st.session_state.persona == "Custom":
                 custom_persona = st.text_area(
                     "Enter Custom Persona Description:",
