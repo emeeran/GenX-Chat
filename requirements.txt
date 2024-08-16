@@ -69,3 +69,8 @@ tzdata==2024.1
 urllib3==2.2.2
 watchdog==4.0.2
 yarl==1.9.4
+openpyxl==3.1.2
+python-pptx==0.6.21
+matplotlib==3.6.2
+speechrecognition==3.8.1
+
