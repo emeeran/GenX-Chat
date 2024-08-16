@@ -3,8 +3,10 @@ import base64
 import logging
 import asyncio
 import json
+import re
+from datetime import datetime
 from typing import List, Dict, Any
-from functools import lru_cache  # Import lru_cache from functools
+from functools import lru_cache
 import streamlit as st
 from dotenv import load_dotenv
 from gtts import gTTS
@@ -14,10 +16,8 @@ import PyPDF2
 import docx
 import pytesseract
 from deep_translator import GoogleTranslator
-from datetime import datetime
 from fpdf import FPDF
 import aiosqlite
-import re
 from cachetools import TTLCache
 from ratelimit import limits, sleep_and_retry
 
@@ -118,7 +118,6 @@ def export_chat(format: str):
         pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, chat_history)
         pdf.output(filename)
-        st.download_button
         st.download_button("Download PDF", filename, file_name=filename)
 
 async def create_database():
@@ -159,6 +158,20 @@ async def delete_chat(chat_name):
         await db.execute("DELETE FROM chat_history WHERE chat_name = ?", (chat_name,))
         await db.commit()
 
+async def summarize_text(text: str, summary_type: str) -> str:
+    summary = ""
+    # Create a summary request based on the type
+    full_prompt = f"Please provide a {summary_type} of the following text: {text}"
+    async for chunk in async_stream_llm_response(
+        get_api_client(st.session_state.provider),
+        st.session_state.model_params,
+        [{"role": "user", "content": full_prompt}],
+        st.session_state.provider,
+        st.session_state.voice,
+    ):
+        summary += chunk
+    return summary
+
 async def create_content(prompt: str, content_type: str) -> str:
     full_prompt = f"Write a {content_type} based on this prompt: {prompt}"
     generated_content = ""
@@ -171,19 +184,6 @@ async def create_content(prompt: str, content_type: str) -> str:
     ):
         generated_content += chunk
     return generated_content
-
-async def summarize_text(text: str, summary_type: str) -> str:
-    full_prompt = f"Please provide a {summary_type} of the following text: {text}"
-    summary = ""
-    async for chunk in async_stream_llm_response(
-        get_api_client(st.session_state.provider),
-        st.session_state.model_params,
-        [{"role": "user", "content": full_prompt}],
-        st.session_state.provider,
-        st.session_state.voice,
-    ):
-        summary += chunk
-    return summary
 
 def get_model_options(provider):
     if provider == "Groq":
@@ -217,20 +217,29 @@ def get_max_token_limit(model):
 def word_count(text):
     return len(text.split())
 
+def summarize_context(messages):
+    summarized_content = ""
+    for message in messages:
+        summarized_content += f"{message['role']}: {message['content']}\n"
+    # Here you may want to send the summarized context to the model as well
+    return summarized_content
+
 def initialize_session_state():
     default_values = {
         "messages": [],
         "audio_base64": "",
         "file_content": "",
         "persona": "Default",
+        "user_preferences": "",  # Initialize this variable to avoid the error
+        "last_topic": "",        # Initialize this variable if required
         "model_params": {
             "model": "llama-3.1-70b-versatile",
             "max_tokens": 1024,
-            "temperature": 0.5,  # Adjusted recommended value
-            "top_p": 0.9,       # Adjusted recommended value
-            "top_k": 50,        # Added recommended top-k value
-            "frequency_penalty": 0.5,   # Added recommended frequency penalty
-            "presence_penalty": 0.5,    # Added recommended presence penalty
+            "temperature": 0.5,
+            "top_p": 0.9,
+            "top_k": 50,
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.5,
         },
         "total_tokens": 0,
         "total_cost": 0,
@@ -254,6 +263,32 @@ def reset_current_chat():
     st.session_state.messages = []
 
 # API Functions
+async def async_stream_openai_response(client, params: Dict[str, Any], messages: List[Dict[str, str]], voice: str = "alloy"):
+    try:
+        # Improve context awareness by including the intent if applicable.
+        if st.session_state.language != "English":
+            assistant_response = translate_text(messages[-1]["content"], st.session_state.language)
+            messages[-1]["content"] = assistant_response
+
+        system_context = f"User preferences: {st.session_state.user_preferences}, Last topic discussed: {st.session_state.last_topic}"
+        messages = [{"role": "system", "content": system_context}] + messages  # Include user context
+
+        response = await client.chat.completions.create(
+            model=params["model"],
+            messages=messages,
+            max_tokens=params["max_tokens"],
+            temperature=params["temperature"],
+            top_p=params["top_p"],
+            frequency_penalty=params.get("frequency_penalty"),
+            presence_penalty=params.get("presence_penalty"),
+        )
+        
+        yield response.choices[0].message.content
+
+    except Exception as e:
+        logger.error(f"Error in OpenAI API call: {str(e)}")
+        yield f"Error in OpenAI API call: {str(e)}"
+
 async def async_stream_groq_response(client, params: Dict[str, Any], messages: List[Dict[str, str]]):
     try:
         async with aiohttp.ClientSession() as session:
@@ -271,8 +306,8 @@ async def async_stream_groq_response(client, params: Dict[str, Any], messages: L
                         "max_tokens": params.get("max_tokens"),
                         "temperature": params.get("temperature"),
                         "top_p": params.get("top_p"),
-                        "frequency_penalty": params.get("frequency_penalty"),      # Added frequency penalty
-                        "presence_penalty": params.get("presence_penalty"),        # Added presence penalty
+                        "frequency_penalty": params.get("frequency_penalty"),
+                        "presence_penalty": params.get("presence_penalty"),
                         "stream": True,
                     },
                 ) as response:
@@ -302,32 +337,6 @@ async def async_stream_groq_response(client, params: Dict[str, Any], messages: L
     except Exception as e:
         logger.error(f"Error in Groq API call: {str(e)}")
         yield f"Error in Groq API call: {str(e)}"
-
-async def async_stream_openai_response(client, params: Dict[str, Any], messages: List[Dict[str, str]], voice: str = "alloy"):
-    try:
-        if st.session_state.language != "English":
-            assistant_response = translate_text(messages[-1]["content"], st.session_state.language)
-            messages[-1]["content"] = assistant_response
-
-        response = await client.chat.completions.create(
-            model=params["model"],
-            messages=[{"role": "assistant", "content": messages[-1]["content"]}],
-            max_tokens=params["max_tokens"],
-            temperature=params["temperature"],
-            top_p=params["top_p"],
-            frequency_penalty=params.get("frequency_penalty"),     # Added frequency penalty
-            presence_penalty=params.get("presence_penalty"),       # Added presence penalty
-        )
-
-        yield response.choices[0].message.content
-
-    except Exception as e:
-        logger.error(f"Error in OpenAI API call: {str(e)}")
-        yield f"Error in OpenAI API call: {str(e)}"
-
-    except Exception as e:
-        logger.error(f"Error in OpenAI API call: {str(e)}")
-        yield f"Error in OpenAI API call: {str(e)}"
 
 async def async_stream_llm_response(client: Any, params: Dict[str, Any], messages: List[Dict[str, str]], provider: str, voice: str = "alloy") -> str:
     try:
@@ -371,13 +380,16 @@ async def process_chat_input(prompt: str, client: Any) -> None:
         if st.session_state.file_content:
             prompt = f"Based on the uploaded file content, {prompt}\n\nFile content: {st.session_state.file_content[:MAX_FILE_CONTENT_LENGTH]}{TRUNCATION_ELLIPSIS}"
 
+        # Summarize previous conversations to enhance context
+        context_summary = summarize_context(st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:])
         persona_content = st.session_state.custom_persona if st.session_state.persona == "Custom" else PERSONAS[st.session_state.persona]
 
         messages = [
             {"role": "system", "content": persona_content},
-            *st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:],
+            {"role": "system", "content": context_summary},  # Add summarized context here
             {"role": "user", "content": prompt},
         ]
+
         with st.chat_message("user"):
             st.markdown(prompt)
 
@@ -485,9 +497,9 @@ def setup_sidebar() -> None:
                     "max_tokens": 1024,
                     "temperature": 1.0,
                     "top_p": 1.0,
-                    "top_k": 50,        # Added top_k to default values
-                    "frequency_penalty": 0.5,   # Added frequency penalty to default values
-                    "presence_penalty": 0.5,    # Added presence penalty to default values
+                    "top_k": 50,
+                    "frequency_penalty": 0.5,
+                    "presence_penalty": 0.5,
                 }
 
             st.session_state.model_params["model"] = st.selectbox("Choose Model:", options=model_options, index=model_options.index(st.session_state.model_params["model"]) if st.session_state.model_params["model"] in model_options else 0)
@@ -496,9 +508,9 @@ def setup_sidebar() -> None:
             st.session_state.model_params["max_tokens"] = st.slider("Max Tokens:", min_value=1, max_value=max_token_limit, value=min(st.session_state.model_params["max_tokens"], max_token_limit), step=1)
             st.session_state.model_params["temperature"] = st.slider("Temperature:", 0.0, 2.0, st.session_state.model_params["temperature"], 0.1)
             st.session_state.model_params["top_p"] = st.slider("Top-p:", 0.0, 1.0, st.session_state.model_params["top_p"], 0.1)
-            st.session_state.model_params["top_k"] = st.slider("Top-k:", 0, 100, st.session_state.model_params["top_k"])  # Added slider for top_k
-            st.session_state.model_params["frequency_penalty"] = st.slider("Frequency Penalty:", 0.0, 1.0, st.session_state.model_params["frequency_penalty"], 0.1)  # Added slider for frequency penalty
-            st.session_state.model_params["presence_penalty"] = st.slider("Presence Penalty:", 0.0, 1.0, st.session_state.model_params["presence_penalty"], 0.1)  # Added slider for presence penalty
+            st.session_state.model_params["top_k"] = st.slider("Top-k:", 0, 100, st.session_state.model_params["top_k"]) 
+            st.session_state.model_params["frequency_penalty"] = st.slider("Frequency Penalty:", 0.0, 1.0, st.session_state.model_params["frequency_penalty"], 0.1) 
+            st.session_state.model_params["presence_penalty"] = st.slider("Presence Penalty:", 0.0, 1.0, st.session_state.model_params["presence_penalty"], 0.1) 
 
         with st.expander("Persona"):
             persona_options = list(PERSONAS.keys()) + ["Custom"]
