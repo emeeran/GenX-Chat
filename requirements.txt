@@ -84,3 +84,5 @@ watchdog==4.0.2
 whisper==1.1.10
 XlsxWriter==3.2.0
 yarl==1.9.4
+matplotlib
+

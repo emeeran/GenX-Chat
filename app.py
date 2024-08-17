@@ -530,7 +530,7 @@ def setup_sidebar() -> None:
         )
         st.session_state.provider = selected_provider
 
-        st.markdown("<h2 style='text-align: center;'>⚙️ Settings</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>Settings 🛠️ </h2> ", unsafe_allow_html=True)
 
         with st.expander("Chat Settings", expanded=True):
             saved_chats = st.session_state.get('saved_chats', [])
@@ -688,10 +688,9 @@ async def main() -> None:
         st.error(f"Failed to initialize {st.session_state.provider} client. Please check your API key.")
         return
 
-    # Run the main chat loop
+    # Run the main chat loop 
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; color : #74a6d4">Experience the power of AI!</p>', unsafe_allow_html=True)
-
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
