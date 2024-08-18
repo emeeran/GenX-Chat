@@ -1,4 +1,4 @@
-Certainly! I'll provide instructions for each major function of the app:
+Here I  have provided instructions for each major function of the app:
 
 1. Starting a Chat:
    - Enter your message in the chat input at the bottom of the main screen.
