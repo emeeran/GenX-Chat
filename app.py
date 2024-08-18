@@ -1,3 +1,5 @@
+#GenX with openai audion issue
+
 import os
 import base64
 import logging
