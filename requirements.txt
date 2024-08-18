@@ -42,7 +42,7 @@ mdurl==0.1.2
 multidict==6.0.5
 narwhals==1.4.0
 numpy==2.0.1
-openai==0.28.0
+openai==1.41.0
 openpyxl==3.1.2
 packaging==24.1
 pandas==2.2.2
@@ -84,5 +84,3 @@ watchdog==4.0.2
 whisper==1.1.10
 XlsxWriter==3.2.0
 yarl==1.9.4
-matplotlib
-
