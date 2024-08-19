@@ -475,15 +475,24 @@ async def process_chat_input(prompt: str, client: Any) -> None:
         ])
 
         # User Feedback Section
-        col1, col2 = st.columns([1, 4])  # Adjust column ratios as needed
-        with col1:
-            st.markdown("**Rate my response**")
-            if st.button("👍"):
-                save_feedback("Good")
-                st.success("Feedback submitted!")
-            if st.button("👎"):
-                save_feedback("Poor")
-                st.success("Feedback submitted!")
+        if 'feedback_given' not in st.session_state:
+            st.session_state.feedback_given = False  # Initialize feedback_given flag
+
+        if not st.session_state.feedback_given:  # Only show the button if feedback hasn't been given
+            if st.button("Feedback: 👍 👎"):
+                st.session_state.feedback_given = True  # Update the flag after button click
+                
+                # Create two columns to divide the button space
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    if st.button("👍"):
+                        save_feedback("Good")
+                        st.success("Feedback submitted!")
+                with col2:
+                    if st.button("👎"):
+                        save_feedback("Poor")
+                        st.success("Feedback submitted!")
 
         if st.session_state.enable_audio and full_response.strip():
             if st.session_state.provider != "OpenAI":
