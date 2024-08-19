@@ -1,5 +1,3 @@
-#GenX with openai audion issue
-
 import os
 import base64
 import logging
@@ -316,15 +314,9 @@ def load_chat_history_locally():
 
 # Feedback functions
 def save_feedback(feedback: str):
-    if "feedback.json" not in os.listdir():
-        with open('feedback.json', 'w') as f:
-            json.dump([], f)  # Initialize with an empty list if it doesn't exist
+    with open('feedback.json', 'a') as f:  # Open in append mode to add new feedback
+        f.write(json.dumps({"feedback": feedback, "timestamp": datetime.now().isoformat()}) + "\n")  # Write each feedback as a separate line
 
-    with open('feedback.json', 'r+') as f:
-        feedback_data = json.load(f)
-        feedback_data.append(feedback)
-        f.seek(0)
-        json.dump(feedback_data, f)
 
 # API Functions with Retry Logic
 async def async_stream_groq_response(client, params: Dict[str, Any], messages: List[Dict[str, str]]):
@@ -483,13 +475,15 @@ async def process_chat_input(prompt: str, client: Any) -> None:
         ])
 
         # User Feedback Section
-        feedback_container = st.container()
-        with feedback_container:
-            st.markdown("### How was the response?")
-            feedback = st.radio("Rate this response:", options=["👍 Good", "👎 Poor"], key="feedback")
-            if st.button("Submit Feedback"):
-                save_feedback({"feedback": feedback, "response": full_response})
-                st.success("Thanks for your feedback!")
+        col1, col2 = st.columns([1, 4])  # Adjust column ratios as needed
+        with col1:
+            st.markdown("**Rate my response**")
+            if st.button("👍"):
+                save_feedback("Good")
+                st.success("Feedback submitted!")
+            if st.button("👎"):
+                save_feedback("Poor")
+                st.success("Feedback submitted!")
 
         if st.session_state.enable_audio and full_response.strip():
             if st.session_state.provider != "OpenAI":
@@ -697,7 +691,7 @@ async def main() -> None:
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                               st.markdown(message["content"])
 
     prompt = st.chat_input("Enter your message:")
     if prompt:
@@ -713,5 +707,5 @@ async def main() -> None:
     st.sidebar.metric("Estimated Cost", f"${st.session_state.total_cost:.4f}")
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
+    st.set_page_config(page_title="GenX-Chat", page_icon=" ", layout="wide")
     asyncio.run(main())
