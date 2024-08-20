@@ -542,7 +542,7 @@ def setup_sidebar() -> None:
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                if st.button("Retry"):
+                if st.button("Rerun"):
                     st.rerun()
             with col5:
                 if st.button("New"):
@@ -562,7 +562,7 @@ def setup_sidebar() -> None:
                         st.session_state.save_chat = chat_name_input
                         st.rerun()
 
-            st.button("Reset", on_click=reset_current_chat)
+            # st.button("Reset", on_click=reset_current_chat)
 
         with st.expander("Model"):
             model_options = get_model_options(st.session_state.provider)
