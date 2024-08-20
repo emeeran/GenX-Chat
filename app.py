@@ -83,11 +83,11 @@ def process_uploaded_file(uploaded_file):
         "image/jpeg": lambda f: perform_ocr(f),  # Perform OCR for JPEG images
         "image/png": lambda f: perform_ocr(f),  # Perform OCR for PNG images
     }
-    
+
     for file_type, handler in file_handlers.items():
         if uploaded_file.type.startswith(file_type):
             return handler(uploaded_file)
-    
+
     raise ValueError("Unsupported file type")
 
 def perform_ocr(image_file):
@@ -314,9 +314,15 @@ def load_chat_history_locally():
 
 # Feedback functions
 def save_feedback(feedback: str):
-    with open('feedback.json', 'a') as f:  # Open in append mode to add new feedback
-        f.write(json.dumps({"feedback": feedback, "timestamp": datetime.now().isoformat()}) + "\n")  # Write each feedback as a separate line
+    if "feedback.json" not in os.listdir():
+        with open('feedback.json', 'w') as f:
+            json.dump([], f)  # Initialize with an empty list if it doesn't exist
 
+    with open('feedback.json', 'r+') as f:
+        feedback_data = json.load(f)
+        feedback_data.append(feedback)
+        f.seek(0)
+        json.dump(feedback_data, f)
 
 # API Functions with Retry Logic
 async def async_stream_groq_response(client, params: Dict[str, Any], messages: List[Dict[str, str]]):
@@ -475,15 +481,13 @@ async def process_chat_input(prompt: str, client: Any) -> None:
         ])
 
         # User Feedback Section
-        col1, col2 = st.columns([1, 4])  # Adjust column ratios as needed
-        with col1:
-            st.markdown("**Rate my response**")
-            if st.button("👍"):
-                save_feedback("Good")
-                st.success("Feedback submitted!")
-            if st.button("👎"):
-                save_feedback("Poor")
-                st.success("Feedback submitted!")
+        feedback_container = st.container()
+        with feedback_container:
+            st.markdown("### How was the response?")
+            feedback = st.radio("Rate this response:", options=["👍 Good", "👎 Poor"], key="feedback")
+            if st.button("Submit Feedback"):
+                save_feedback({"feedback": feedback, "response": full_response})
+                st.success("Thanks for your feedback!")
 
         if st.session_state.enable_audio and full_response.strip():
             if st.session_state.provider != "OpenAI":
@@ -536,7 +540,7 @@ def setup_sidebar() -> None:
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                if st.button("Retry"):
+                if st.button("Rerun"):
                     st.rerun()
             with col5:
                 if st.button("New"):
@@ -556,7 +560,7 @@ def setup_sidebar() -> None:
                         st.session_state.save_chat = chat_name_input
                         st.rerun()
 
-            st.button("Reset", on_click=reset_current_chat)
+            # st.button("Reset", on_click=reset_current_chat)
 
         with st.expander("Model"):
             model_options = get_model_options(st.session_state.provider)
@@ -684,14 +688,14 @@ async def main() -> None:
         st.error(f"Failed to initialize {st.session_state.provider} client. Please check your API key.")
         return
 
-    # Run the main chat loop 
+    # Run the main chat loop
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; color : #74a6d4">Experience the power of AI!</p>', unsafe_allow_html=True)
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
             with st.chat_message(message["role"]):
-                               st.markdown(message["content"])
+                st.markdown(message["content"])
 
     prompt = st.chat_input("Enter your message:")
     if prompt:
@@ -707,5 +711,5 @@ async def main() -> None:
     st.sidebar.metric("Estimated Cost", f"${st.session_state.total_cost:.4f}")
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="GenX-Chat", page_icon=" ", layout="wide")
+    st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
