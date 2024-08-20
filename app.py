@@ -737,4 +737,3 @@ async def main() -> None:
 if __name__ == "__main__":
     st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
-
