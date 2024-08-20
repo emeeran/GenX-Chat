@@ -25,6 +25,7 @@ import speech_recognition as sr  # Added for audio processing
 import openpyxl  # For Excel file handling
 from pptx import Presentation  # For handling PowerPoint files
 import matplotlib.pyplot as plt  # For advanced analytics
+import openai  # Import OpenAI library
 
 # Load environment variables
 load_dotenv()
@@ -128,6 +129,22 @@ def text_to_speech(text: str, lang: str):
         audio_bytes = f.read()
     os.remove(audio_file)
     st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
+
+def generate_openai_tts(text: str, voice: str):
+    try:
+        response = openai.Audio.create(
+            model="tts-1",
+            input=text,
+            voice=voice,
+        )
+        audio_bytes = response.content
+        st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error generating TTS with OpenAI: {e}")
+        raise
 
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == "English":
@@ -398,6 +415,9 @@ async def async_stream_openai_response(client, params: Dict[str, Any], messages:
 
         yield response.choices[0].message.content
 
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error: {e}")
+        yield f"OpenAI API error: {e}"
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
         yield f"Error in OpenAI API call: {str(e)}"
@@ -490,7 +510,9 @@ async def process_chat_input(prompt: str, client: Any) -> None:
                 st.success("Thanks for your feedback!")
 
         if st.session_state.enable_audio and full_response.strip():
-            if st.session_state.provider != "OpenAI":
+            if st.session_state.provider == "OpenAI":
+                generate_openai_tts(full_response, st.session_state.voice)
+            else:
                 text_to_speech(full_response, st.session_state.language)
             st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
 
@@ -510,6 +532,8 @@ async def process_chat_input(prompt: str, client: Any) -> None:
 
     except ValueError as ve:
         st.error(f"Invalid input: {str(ve)}")
+    except openai.APIError as e:
+        st.error(f"OpenAI API error: {e}")
     except Exception as e:
         logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
         st.error(f"An unexpected error occurred. Please try again later.")
@@ -713,3 +737,4 @@ async def main() -> None:
 if __name__ == "__main__":
     st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
+
