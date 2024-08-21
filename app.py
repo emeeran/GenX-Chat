@@ -1,5 +1,3 @@
-#GenX with openai audion issue
-
 import os
 import base64
 import logging
@@ -27,6 +25,7 @@ import speech_recognition as sr  # Added for audio processing
 import openpyxl  # For Excel file handling
 from pptx import Presentation  # For handling PowerPoint files
 import matplotlib.pyplot as plt  # For advanced analytics
+import openai  # Import OpenAI library
 
 # Load environment variables
 load_dotenv()
@@ -85,11 +84,11 @@ def process_uploaded_file(uploaded_file):
         "image/jpeg": lambda f: perform_ocr(f),  # Perform OCR for JPEG images
         "image/png": lambda f: perform_ocr(f),  # Perform OCR for PNG images
     }
-    
+
     for file_type, handler in file_handlers.items():
         if uploaded_file.type.startswith(file_type):
             return handler(uploaded_file)
-    
+
     raise ValueError("Unsupported file type")
 
 def perform_ocr(image_file):
@@ -131,6 +130,22 @@ def text_to_speech(text: str, lang: str):
     os.remove(audio_file)
     st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
 
+def generate_openai_tts(text: str, voice: str):
+    try:
+        response = openai.Audio.create(
+            model="tts-1",
+            input=text,
+            voice=voice,
+        )
+        audio_bytes = response.content
+        st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error generating TTS with OpenAI: {e}")
+        raise
+
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == "English":
         return text
@@ -158,6 +173,21 @@ def export_chat(format: str):
         pdf.multi_cell(0, 10, chat_history)
         pdf.output(filename)
         st.download_button("Download PDF", filename, file_name=filename)
+    elif format == "txt":
+        with open(filename, "w") as f:
+            f.write(chat_history)
+        st.download_button("Download Text", filename, file_name=filename)
+    elif format == "docx":
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph(chat_history)
+        doc.save(filename)
+        st.download_button("Download DOCX", filename, file_name=filename)
+    elif format == "json":
+        chat_data = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages]
+        with open(filename, "w") as f:
+            json.dump(chat_data, f, indent=4)
+        st.download_button("Download JSON", filename, file_name=filename)
 
 async def create_database():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -171,6 +201,14 @@ async def create_database():
             )
         """)
         await db.commit()
+
+async def add_role_column_if_not_exists():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(chat_history)") as cursor:
+            columns = [row[1] async for row in cursor]
+        if "role" not in columns:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN role TEXT")
+            await db.commit()
 
 async def save_chat_history_to_db(chat_name: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -400,6 +438,9 @@ async def async_stream_openai_response(client, params: Dict[str, Any], messages:
 
         yield response.choices[0].message.content
 
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error: {e}")
+        yield f"OpenAI API error: {e}"
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
         yield f"Error in OpenAI API call: {str(e)}"
@@ -492,7 +533,9 @@ async def process_chat_input(prompt: str, client: Any) -> None:
                 st.success("Thanks for your feedback!")
 
         if st.session_state.enable_audio and full_response.strip():
-            if st.session_state.provider != "OpenAI":
+            if st.session_state.provider == "OpenAI":
+                generate_openai_tts(full_response, st.session_state.voice)
+            else:
                 text_to_speech(full_response, st.session_state.language)
             st.audio(f"data:audio/mp3;base64,{st.session_state.audio_base64}", format="audio/mp3")
 
@@ -512,6 +555,8 @@ async def process_chat_input(prompt: str, client: Any) -> None:
 
     except ValueError as ve:
         st.error(f"Invalid input: {str(ve)}")
+    except openai.APIError as e:
+        st.error(f"OpenAI API error: {e}")
     except Exception as e:
         logger.error(f"Unexpected error in process_chat_input: {str(e)}", exc_info=True)
         st.error(f"An unexpected error occurred. Please try again later.")
@@ -631,7 +676,7 @@ def setup_sidebar() -> None:
                 st.session_state.content_type = st.selectbox("Select Content Type:", list(CONTENT_TYPES.keys()))
 
         with st.expander("Export"):
-            export_format = st.selectbox("Export Format", ["md", "pdf"])
+            export_format = st.selectbox("Export Format", ["md", "pdf", "txt", "docx", "json"])
             st.button("Export Chat", on_click=lambda: export_chat(export_format))
 
         st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
@@ -666,6 +711,7 @@ async def main() -> None:
         st.session_state.messages = load_chat_history_locally()
     else:
         await create_database()
+        await add_role_column_if_not_exists()
         if 'saved_chats' not in st.session_state:
             st.session_state.saved_chats = await get_saved_chat_names()
 
@@ -690,7 +736,7 @@ async def main() -> None:
         st.error(f"Failed to initialize {st.session_state.provider} client. Please check your API key.")
         return
 
-    # Run the main chat loop 
+    # Run the main chat loop
     st.markdown('<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; color : #74a6d4">Experience the power of AI!</p>', unsafe_allow_html=True)
     chat_container = st.container()
