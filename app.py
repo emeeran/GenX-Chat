@@ -149,7 +149,7 @@ def generate_openai_tts(text: str, voice: str):
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == "English":
         return text
-    translator = GoogleTranslator(source="auto", target=target_lang)
+        translator = GoogleTranslator(source="auto", target=target_lang)
     return translator.translate(text)
 
 def update_token_count(tokens: int):
@@ -186,6 +186,14 @@ async def create_database():
             )
         """)
         await db.commit()
+
+async def add_role_column_if_not_exists():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(chat_history)") as cursor:
+            columns = [row[1] async for row in cursor]
+        if "role" not in columns:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN role TEXT")
+            await db.commit()
 
 async def save_chat_history_to_db(chat_name: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -688,6 +696,7 @@ async def main() -> None:
         st.session_state.messages = load_chat_history_locally()
     else:
         await create_database()
+        await add_role_column_if_not_exists()
         if 'saved_chats' not in st.session_state:
             st.session_state.saved_chats = await get_saved_chat_names()
 
@@ -737,3 +746,4 @@ async def main() -> None:
 if __name__ == "__main__":
     st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
+
