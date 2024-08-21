@@ -149,7 +149,7 @@ def generate_openai_tts(text: str, voice: str):
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == "English":
         return text
-        translator = GoogleTranslator(source="auto", target=target_lang)
+    translator = GoogleTranslator(source="auto", target=target_lang)
     return translator.translate(text)
 
 def update_token_count(tokens: int):
@@ -173,6 +173,21 @@ def export_chat(format: str):
         pdf.multi_cell(0, 10, chat_history)
         pdf.output(filename)
         st.download_button("Download PDF", filename, file_name=filename)
+    elif format == "txt":
+        with open(filename, "w") as f:
+            f.write(chat_history)
+        st.download_button("Download Text", filename, file_name=filename)
+    elif format == "docx":
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph(chat_history)
+        doc.save(filename)
+        st.download_button("Download DOCX", filename, file_name=filename)
+    elif format == "json":
+        chat_data = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages]
+        with open(filename, "w") as f:
+            json.dump(chat_data, f, indent=4)
+        st.download_button("Download JSON", filename, file_name=filename)
 
 async def create_database():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -661,7 +676,7 @@ def setup_sidebar() -> None:
                 st.session_state.content_type = st.selectbox("Select Content Type:", list(CONTENT_TYPES.keys()))
 
         with st.expander("Export"):
-            export_format = st.selectbox("Export Format", ["md", "pdf"])
+            export_format = st.selectbox("Export Format", ["md", "pdf", "txt", "docx", "json"])
             st.button("Export Chat", on_click=lambda: export_chat(export_format))
 
         st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
@@ -746,4 +761,3 @@ async def main() -> None:
 if __name__ == "__main__":
     st.set_page_config(page_title="GenX-Chat", page_icon="💬", layout="wide")
     asyncio.run(main())
-
