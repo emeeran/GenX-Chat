@@ -10,6 +10,7 @@ scrapped/
 chat_exports/
 to_move/
 local/
+.env
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
