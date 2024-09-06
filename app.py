@@ -5,7 +5,6 @@ import asyncio
 import json
 import requests
 from typing import List, Dict, Any
-from functools import lru_cache
 import streamlit as st
 from dotenv import load_dotenv
 from gtts import gTTS
@@ -13,7 +12,6 @@ from PIL import Image
 import aiohttp
 import PyPDF2
 import docx
-from pptx import Presentation
 import pytesseract
 from deep_translator import GoogleTranslator
 from datetime import datetime
@@ -22,9 +20,10 @@ import aiosqlite
 import re
 from cachetools import TTLCache
 from ratelimit import limits, sleep_and_retry
-import speech_recognition as sr
-import openpyxl
 import openai
+import openpyxl
+from pptx import Presentation
+from functools import lru_cache
 
 # Load environment variables
 load_dotenv()
@@ -32,11 +31,9 @@ load_dotenv()
 # API Keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-GOOGLE_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Logging configuration
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -51,9 +48,9 @@ VOICE_OPTIONS = {
     "gTTS": ["en", "ta", "hi"],
 }
 
-PROVIDER_OPTIONS = ["Groq", "OpenAI", "Anthropic", "Google Gemini"]
+PROVIDER_OPTIONS = ["Groq", "OpenAI"]
 
-# Import persona and content_type from the root directory
+# Load persona and content_type from the root directory
 from persona import PERSONAS
 from content_type import CONTENT_TYPES
 
@@ -79,6 +76,7 @@ def sanitize_input(input_text):
 
 
 def process_uploaded_file(uploaded_file):
+    # Handles the uploaded file and returns its text content
     file_handlers = {
         "application/pdf": lambda f: " ".join(
             page.extract_text() for page in PyPDF2.PdfReader(f).pages
@@ -104,6 +102,7 @@ def process_uploaded_file(uploaded_file):
 
 
 def perform_ocr(image_file):
+    """Perform OCR on the uploaded image file."""
     try:
         image = Image.open(image_file)
         text = pytesseract.image_to_string(image)
@@ -180,47 +179,61 @@ def update_token_count(tokens: int):
     )
 
 
-def export_chat(format: str):
+def export_chat(format: str) -> str:
+    # Check if chat history is available
+    if not st.session_state.messages:
+        st.warning("No chat history available to export.")
+        logger.warning("Export attempted with no chat messages.")
+        return None
+
+    # Prepare chat history for export
     chat_history = "\n\n".join(
         [
             f"**{m['role'].capitalize()}:** {m['content']}"
             for m in st.session_state.messages
         ]
-    )
+    ).strip()  # Remove any leading/trailing whitespace
+
+    # Create export file
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"chat_exports/chat_history_{timestamp}.{format}"
     os.makedirs("chat_exports", exist_ok=True)
 
-    if format == "md":
-        with open(filename, "w") as f:
-            f.write(chat_history)
-        st.download_button("Download Markdown", filename, file_name=filename)
-    elif format == "pdf":
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 10, chat_history)
-        pdf.output(filename)
-        st.download_button("Download PDF", filename, file_name=filename)
-    elif format == "txt":
-        with open(filename, "w") as f:
-            f.write(chat_history)
-        st.download_button("Download Text", filename, file_name=filename)
-    elif format == "docx":
-        from docx import Document
+    try:
+        # Write to the appropriate file format
+        if format == "md":
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(chat_history)
+        elif format == "pdf":
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            pdf.multi_cell(0, 10, chat_history)
+            pdf.output(filename)
+        elif format == "txt":
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(chat_history)
+        elif format == "docx":
+            from docx import Document
 
-        doc = Document()
-        doc.add_paragraph(chat_history)
-        doc.save(filename)
-        st.download_button("Download DOCX", filename, file_name=filename)
-    elif format == "json":
-        chat_data = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in st.session_state.messages
-        ]
-        with open(filename, "w") as f:
-            json.dump(chat_data, f, indent=4)
-        st.download_button("Download JSON", filename, file_name=filename)
+            doc = Document()
+            doc.add_paragraph(chat_history)
+            doc.save(filename)
+        elif format == "json":
+            chat_data = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in st.session_state.messages
+            ]
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(chat_data, f, indent=4)
+
+        logger.info(f"Chat exported successfully to {filename}")
+        return filename
+
+    except Exception as e:
+        logger.error(f"Error exporting chat: {e}", exc_info=True)
+        st.error(f"An error occurred while exporting the chat: {e}")
+        return None
 
 
 async def create_database():
@@ -291,6 +304,7 @@ async def create_content(prompt: str, content_type: str) -> str:
         st.session_state.model_params,
         [{"role": "user", "content": full_prompt}],
         st.session_state.provider,
+        st.session_state.voice,
     ):
         generated_content += chunk
     return generated_content
@@ -304,6 +318,7 @@ async def summarize_text(text: str, summary_type: str) -> str:
         st.session_state.model_params,
         [{"role": "user", "content": full_prompt}],
         st.session_state.provider,
+        st.session_state.voice,
     ):
         summary += chunk
     return summary
@@ -320,13 +335,6 @@ def get_model_options(provider):
             "mixtral-8x7b-32768",
             "gemma2-9b-it",
             "whisper-large-v3",
-            "gemma-7b-it",
-            "llama-guard-3-8b",
-            "llama3-70b-8192",
-            "llama3-8b-8192",
-            "llama3-groq-70b-8192-tool-use-preview",
-            "llama3-groq-8b-8192-tool-use-preview",
-            "llava-v1.5-7b-4096-preview",
         ]
     elif provider == "OpenAI":
         return [
@@ -334,22 +342,16 @@ def get_model_options(provider):
             "gpt-4o",
             "gpt-3.5-turbo",
         ]
-    elif provider == "Anthropic":
-        return ["claude-3-haiku-20240307", "claude-3-sonnet-20240620"]
-    elif provider == "Google Gemini":
-        return ["gemini-1.5-flash", "gemini-1.5-pro"]
     return []
 
 
 def get_max_token_limit(model):
     if "mixtral-8x7b-32768" in model:
         return 32768
+    elif "llama-3.1-70b-versatile-131072" in model:
+        return 131072
     elif "gemma2-9b-it" in model:
         return 8192
-    elif "claude-3-haiku-20240307" in model or "claude-3-sonnet-20240620" in model:
-        return 6000
-    elif "gemini" in model:
-        return 4096
     return 4096
 
 
@@ -381,19 +383,7 @@ def initialize_session_state():
         "show_summarization": False,
         "summarization_type": "Main Takeaways",
         "content_type": "Short Story",
-        "provider": (
-            "Groq"
-            if GROQ_API_KEY
-            else (
-                "OpenAI"
-                if OPENAI_API_KEY
-                else (
-                    "Anthropic"
-                    if ANTHROPIC_API_KEY
-                    else "Google Gemini" if GOOGLE_GEMINI_API_KEY else None
-                )
-            )
-        ),
+        "provider": "Groq" if GROQ_API_KEY else "OpenAI" if OPENAI_API_KEY else None,
         "color_scheme": "Light",
         "is_file_response_handled": False,
     }
@@ -521,10 +511,11 @@ async def async_stream_openai_response(
     client, params: Dict[str, Any], messages: List[Dict[str, str]], voice: str = "alloy"
 ):
     try:
-        assistant_response = translate_text(
-            messages[-1]["content"], st.session_state.language
-        )
-        messages[-1]["content"] = assistant_response
+        if st.session_state.language != "English":
+            assistant_response = translate_text(
+                messages[-1]["content"], st.session_state.language
+            )
+            messages[-1]["content"] = assistant_response
 
         response = await client.chat.completions.create(
             model=params["model"],
@@ -539,77 +530,28 @@ async def async_stream_openai_response(
         yield response.choices[0].message.content
 
     except openai.APIError as e:
-        if e.code == 429:
-            logger.error(f"OpenAI API rate limit exceeded: {e}")
-            yield "OpenAI API rate limit exceeded. Please try again later."
-        else:
-            logger.error(f"OpenAI API error: {e}")
-            yield f"OpenAI API error: {e}"
+        logger.error(f"OpenAI API error: {e}")
+        yield f"OpenAI API error: {e}"
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
         yield f"Error in OpenAI API call: {str(e)}"
 
 
-async def async_stream_anthropic_response(client, prompt: str):
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://api.anthropic.com/v1/chat",
-            headers={
-                "Authorization": f"Bearer {ANTHROPIC_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"messages": [{"role": "user", "content": prompt}]},
-        ) as response:
-            if response.status == 404:
-                error_text = await response.text()
-                logger.error(f"Anthropic API Error: {response.status} - {error_text}")
-                yield f"Anthropic API Error: {response.status} - {error_text}"
-            elif response.status != 200:
-                error_text = await response.text()
-                logger.error(f"Anthropic API Error: {response.status} - {error_text}")
-                yield f"Anthropic API Error: {response.status} - {error_text}"
-
-            data = await response.json()
-            yield data.get("completion", "")
-
-
-async def async_stream_gemini_response(client, prompt: str):
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://gemini.googleapis.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GOOGLE_GEMINI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"messages": [{"role": "user", "content": prompt}]},
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                logger.error(
-                    f"Google Gemini API Error: {response.status} - {error_text}"
-                )
-                yield f"Google Gemini API Error: {response.status} - {error_text}"
-
-            data = await response.json()
-            yield data.get("response", "")
-
-
 async def async_stream_llm_response(
-    client: Any, params: Dict[str, Any], messages: List[Dict[str, str]], provider: str
-):
+    client: Any,
+    params: Dict[str, Any],
+    messages: List[Dict[str, str]],
+    provider: str,
+    voice: str = "alloy",
+) -> str:
     try:
-        prompt = messages[-1]["content"]
         if provider == "Groq":
             async for chunk in async_stream_groq_response(client, params, messages):
                 yield chunk
         elif provider == "OpenAI":
-            async for chunk in async_stream_openai_response(client, params, messages):
-                yield chunk
-        elif provider == "Anthropic":
-            async for chunk in async_stream_anthropic_response(client, prompt):
-                yield chunk
-        elif provider == "Google Gemini":
-            async for chunk in async_stream_gemini_response(client, prompt):
+            async for chunk in async_stream_openai_response(
+                client, params, messages, voice
+            ):
                 yield chunk
         else:
             yield f"Error: Unsupported provider: {provider}"
@@ -638,15 +580,7 @@ def get_api_client(provider: str):
 
             return Groq(api_key=GROQ_API_KEY)
         elif provider == "OpenAI":
-            import openai
-
             return openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
-        elif provider == "Anthropic":
-            return "Anthropic Client"  # Placeholder for actual client implementation
-        elif provider == "Google Gemini":
-            return (
-                "Google Gemini Client"  # Placeholder for actual client implementation
-            )
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     except Exception as e:
@@ -687,6 +621,7 @@ async def process_chat_input(prompt: str, client: Any) -> None:
                 st.session_state.model_params,
                 messages,
                 st.session_state.provider,
+                st.session_state.voice,
             ):
                 if chunk.startswith("API Error:"):
                     message_placeholder.error(chunk)
@@ -696,6 +631,7 @@ async def process_chat_input(prompt: str, client: Any) -> None:
 
             message_placeholder.markdown(full_response)
 
+        # Append response to messages
         st.session_state.messages.extend(
             [
                 {"role": "user", "content": prompt},
@@ -703,6 +639,10 @@ async def process_chat_input(prompt: str, client: Any) -> None:
             ]
         )
 
+        # Debug: Log the messages
+        logger.info(f"Current messages in session state: {st.session_state.messages}")
+
+        # User Feedback Section
         feedback_container = st.container()
         with feedback_container:
             st.markdown("### How was the response?")
@@ -778,7 +718,7 @@ def setup_sidebar() -> None:
         st.session_state.provider = selected_provider
 
         st.markdown(
-            "<h2 style='text-align: center;'>Settings 🛠️ </h2>", unsafe_allow_html=True
+            "<h2 style='text-align: center;'>Settings 🛠️ </h2> ", unsafe_allow_html=True
         )
 
         with st.expander("Chat Settings", expanded=True):
@@ -951,7 +891,20 @@ def setup_sidebar() -> None:
             export_format = st.selectbox(
                 "Export Format", ["md", "pdf", "txt", "docx", "json"]
             )
-            st.button("Export Chat", on_click=lambda: export_chat(export_format))
+            if st.button("Export Chat"):
+                filename = export_chat(export_format)
+                if (
+                    filename
+                ):  # Check if filename is valid before showing download button
+                    st.success("Chat exported successfully!")
+                    # Provide a download button for the user
+                    with open(filename, "rb") as f:
+                        st.download_button(
+                            label="Download Chat",
+                            data=f,
+                            file_name=os.path.basename(filename),
+                            mime="application/octet-stream",
+                        )
 
         st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
         if st.session_state.color_scheme == "Dark":
@@ -984,6 +937,7 @@ def handle_file_upload() -> None:
 async def main() -> None:
     initialize_session_state()
 
+    # Load any existing local chat history if offline
     if not is_connected():
         st.warning(
             "You are currently offline. Loading previous chat history from local storage."
@@ -1018,6 +972,7 @@ async def main() -> None:
         )
         return
 
+    # Run the main chat loop
     st.markdown(
         '<h1 style="text-align: center; color: #6ca395;">GenX-Chat 💬</h1>',
         unsafe_allow_html=True,
@@ -1027,7 +982,6 @@ async def main() -> None:
         unsafe_allow_html=True,
     )
     chat_container = st.container()
-
     with chat_container:
         for message in st.session_state.messages[-MAX_CHAT_HISTORY_LENGTH:]:
             with st.chat_message(message["role"]):
@@ -1037,6 +991,7 @@ async def main() -> None:
     if prompt:
         await process_chat_input(prompt, client)
 
+    # Save chat history locally when the user sends a message or when offline
     if not is_connected() and st.session_state.messages:
         save_chat_history_locally()
 
